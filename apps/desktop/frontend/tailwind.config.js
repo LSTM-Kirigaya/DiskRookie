@@ -7,23 +7,23 @@ export default {
     theme: {
       extend: {
         colors: {
-          // 核心：更深邃的背景与更具冲力的点缀色
+          // 清爽白色背景，黑黄为装饰色
           primary: {
-            DEFAULT: '#FFD200',
+            DEFAULT: '#FFD200',      // 黄色主装饰色
             hover: '#FFDF40',
-            low: 'rgba(255, 210, 0, 0.1)', // 用于呼吸灯底色
+            low: 'rgba(255, 210, 0, 0.15)',
           },
-          secondary: '#121316', // 更接近终末地的深舱色
-          sub: '#1A1B1F',      // 模块背景色
-          accent: '#B2E600',   // 升级/精炼绿
-          'text-main': '#F2F2F2',
-          muted: '#666666',    // 装饰线颜色
-          'industrial-blue': '#007ACC', // 辅助科技蓝
+          secondary: '#1A1A1A',      // 黑色副装饰色
+          sub: '#FFFFFF',            // 主背景：纯白
+          accent: '#FFD200',         // 黄色强调
+          'text-main': '#1A1A1A',    // 主文字：黑色
+          muted: '#9CA3AF',          // 灰色辅助文字
+          'surface': '#F5F5F5',      // 卡片/模块背景：浅灰
+          'border': '#E5E7EB',       // 边框颜色
         },
         fontFamily: {
-          // 建议在 index.html 引入：<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Barlow:wght@600;800&display=swap" rel="stylesheet">
-          sans: ['Barlow', 'Inter', 'system-ui', 'sans-serif'], // 略窄的字体更具工业感
-          mono: ['"JetBrains Mono"', 'ui-monospace', 'monospace'],
+          sans: ['Barlow', 'Inter', 'system-ui', 'sans-serif'],
+          mono: ['ui-monospace', 'Consolas', 'monospace'], // 仅作回退，正文统一用 sans
         },
         keyframes: {
           breath: {

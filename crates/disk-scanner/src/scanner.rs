@@ -9,7 +9,55 @@ use rayon::prelude::*;
 const MAX_DEPTH: usize = 10;
 const MAX_CHILDREN_PER_DIR: usize = 500;
 
+/// 遇到这些目录名时只统计总大小，不递归子项（常见包管理器/缓存目录）
+const SHALLOW_DIR_NAMES: &[&str] = &[
+    "node_modules",
+    ".git",
+    ".github",
+    ".venv",
+    "venv",
+    "__pycache__",
+    "target",
+    "vendor",
+    ".npm",
+    ".yarn",
+    ".pnpm",
+    "bower_components",
+    "jspm_packages",
+];
+
 type ProgressCb = Box<dyn Fn(u64, &str) + Send + Sync>;
+
+/// 仅统计目录总大小，不构建子树（用于 shallow 目录）
+fn dir_size_only(
+    path: &Path,
+    counter: &AtomicU64,
+    progress: Option<&ProgressCb>,
+) -> Result<u64, DiskAnalyzerError> {
+    let mut total: u64 = 0;
+    let entries = match std::fs::read_dir(path) {
+        Ok(e) => e,
+        Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
+            return Ok(0);
+        }
+        Err(e) => return Err(DiskAnalyzerError::Io(e)),
+    };
+    for entry in entries.filter_map(|e| e.ok()) {
+        let path = entry.path();
+        if path.is_dir() {
+            if let Ok(size) = dir_size_only(&path, counter, progress) {
+                total = total.saturating_add(size);
+            }
+        } else {
+            total = total.saturating_add(entry.metadata().map(|m| m.len()).unwrap_or(0));
+        }
+    }
+    counter.fetch_add(1, Ordering::Relaxed);
+    if let Some(ref cb) = progress {
+        cb(counter.load(Ordering::Relaxed), path.display().to_string().as_str());
+    }
+    Ok(total)
+}
 
 fn build_tree(
     path: &Path,
@@ -17,6 +65,7 @@ fn build_tree(
     depth: usize,
     counter: &AtomicU64,
     progress: Option<&ProgressCb>,
+    shallow_dirs: bool,
 ) -> Result<(FileNode, u64), DiskAnalyzerError> {
     let metadata = std::fs::metadata(path).map_err(|e| {
         if e.kind() == std::io::ErrorKind::PermissionDenied {
@@ -54,25 +103,63 @@ fn build_tree(
 
         let entries: Vec<_> = entries.into_iter().take(MAX_CHILDREN_PER_DIR).collect();
 
-        // 并行处理子项
+        // 并行处理子项；shallow_dirs 开启时，常见包管理器/缓存目录只计大小不递归
         let results: Vec<_> = entries
             .par_iter()
             .map(|entry| {
                 let child_path = entry.path();
                 let child_name = entry.file_name().to_string_lossy().to_string();
-                match build_tree(&child_path, &child_name, depth + 1, counter, progress) {
-                    Ok((node, cnt)) => Ok((node, cnt)),
-                    Err(DiskAnalyzerError::PermissionDenied(_)) => Ok((
-                        FileNode {
-                            path: child_path.display().to_string(),
-                            name: format!("{} [无权限]", child_name),
-                            size: 0,
-                            is_dir: child_path.is_dir(),
-                            children: vec![],
-                        },
-                        0u64,
-                    )),
-                    Err(e) => Err(e),
+                let is_shallow_dir = child_path.is_dir()
+                    && shallow_dirs
+                    && SHALLOW_DIR_NAMES
+                        .iter()
+                        .any(|&s| s.eq_ignore_ascii_case(&child_name));
+                if is_shallow_dir {
+                    match dir_size_only(&child_path, counter, progress) {
+                        Ok(size) => Ok((
+                            FileNode {
+                                path: child_path.display().to_string(),
+                                name: child_name,
+                                size,
+                                is_dir: true,
+                                children: vec![],
+                            },
+                            1u64,
+                        )),
+                        Err(DiskAnalyzerError::PermissionDenied(_)) => Ok((
+                            FileNode {
+                                path: child_path.display().to_string(),
+                                name: format!("{} [无权限]", child_name),
+                                size: 0,
+                                is_dir: true,
+                                children: vec![],
+                            },
+                            0u64,
+                        )),
+                        Err(e) => Err(e),
+                    }
+                } else {
+                    match build_tree(
+                        &child_path,
+                        &child_name,
+                        depth + 1,
+                        counter,
+                        progress,
+                        shallow_dirs,
+                    ) {
+                        Ok((node, cnt)) => Ok((node, cnt)),
+                        Err(DiskAnalyzerError::PermissionDenied(_)) => Ok((
+                            FileNode {
+                                path: child_path.display().to_string(),
+                                name: format!("{} [无权限]", child_name),
+                                size: 0,
+                                is_dir: child_path.is_dir(),
+                                children: vec![],
+                            },
+                            0u64,
+                        )),
+                        Err(e) => Err(e),
+                    }
                 }
             })
             .collect();
@@ -111,10 +198,11 @@ fn normalize_path(path: &str) -> std::path::PathBuf {
     std::path::PathBuf::from(s)
 }
 
-/// 执行磁盘扫描（支持进度回调）
+/// 执行磁盘扫描（支持进度回调；shallow_dirs 为 true 时对 node_modules/.git 等只计大小不递归）
 pub fn scan_path_with_progress(
     path: &str,
     progress: Option<ProgressCb>,
+    shallow_dirs: bool,
 ) -> Result<ScanResult, DiskAnalyzerError> {
     let start = Instant::now();
     let path_buf = normalize_path(path);
@@ -133,8 +221,14 @@ pub fn scan_path_with_progress(
         .to_string();
 
     let counter = AtomicU64::new(0);
-    let (root, file_count) =
-        build_tree(&path_buf, &name, 0, &counter, progress.as_ref())?;
+    let (root, file_count) = build_tree(
+        &path_buf,
+        &name,
+        0,
+        &counter,
+        progress.as_ref(),
+        shallow_dirs,
+    )?;
     let scan_time_ms = start.elapsed().as_millis() as u64;
     let total_size = root.size;
 
@@ -146,9 +240,9 @@ pub fn scan_path_with_progress(
     })
 }
 
-/// 执行磁盘扫描（无进度）
+/// 执行磁盘扫描（无进度；默认开启 shallow_dirs）
 pub fn scan_path(path: &str) -> Result<ScanResult, DiskAnalyzerError> {
-    scan_path_with_progress(path, None)
+    scan_path_with_progress(path, None, true)
 }
 
 #[cfg(test)]

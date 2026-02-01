@@ -3,14 +3,33 @@
 @tailwind utilities;
 
 :root {
-  --color-sub: #2A2A2A;
   --color-primary: #FFD200;
-  --color-text: #E0E0E0;
-  --color-muted: #5C5C5C;
+  --color-secondary: #1A1A1A;
+  --color-surface: #F5F5F5;
+  --color-border: #E5E7EB;
 }
 
 body {
-  @apply bg-sub text-text-main antialiased font-sans;
+  @apply bg-white text-text-main antialiased font-sans;
   margin: 0;
   min-height: 100vh;
+}
+
+/* 自定义滚动条 */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #d1d5db;
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #9ca3af;
 }
