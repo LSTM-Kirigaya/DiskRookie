@@ -11,6 +11,7 @@ pub fn run() {
             commands::plan::get_cleanup_plan,
             commands::execute::execute_plan,
             commands::permission::check_admin_permission,
+            commands::delete::delete_item,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

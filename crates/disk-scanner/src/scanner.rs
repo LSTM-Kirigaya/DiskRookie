@@ -40,6 +40,10 @@ fn dir_size_only(
         Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
             return Ok(0);
         }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            // 路径不存在（符号链接失效、文件被删除等），跳过
+            return Ok(0);
+        }
         Err(e) => return Err(DiskAnalyzerError::Io(e)),
     };
     for entry in entries.filter_map(|e| e.ok()) {
@@ -70,6 +74,9 @@ fn build_tree(
     let metadata = std::fs::metadata(path).map_err(|e| {
         if e.kind() == std::io::ErrorKind::PermissionDenied {
             DiskAnalyzerError::PermissionDenied(path.display().to_string())
+        } else if e.kind() == std::io::ErrorKind::NotFound {
+            // 路径不存在（符号链接失效、文件在扫描过程中被删除等）
+            DiskAnalyzerError::PermissionDenied(format!("{} [路径不存在]", path.display()))
         } else {
             DiskAnalyzerError::Io(e)
         }
@@ -84,6 +91,9 @@ fn build_tree(
         let mut entries: Vec<_> = std::fs::read_dir(path).map_err(|e| {
             if e.kind() == std::io::ErrorKind::PermissionDenied {
                 DiskAnalyzerError::PermissionDenied(path.display().to_string())
+            } else if e.kind() == std::io::ErrorKind::NotFound {
+                // 路径不存在（符号链接失效、目录在扫描过程中被删除等）
+                DiskAnalyzerError::PermissionDenied(format!("{} [路径不存在]", path.display()))
             } else {
                 DiskAnalyzerError::Io(e)
             }
@@ -125,7 +135,7 @@ fn build_tree(
                         Ok(size) => Ok((
                             FileNode {
                                 path: child_path.display().to_string(),
-                                name: child_name,
+                                name: child_name.clone(),
                                 size,
                                 is_dir: true,
                                 modified: entry_modified,

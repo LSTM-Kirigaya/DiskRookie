@@ -2,11 +2,13 @@ import { useState, useCallback, useEffect, useRef, useMemo } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { open } from '@tauri-apps/plugin-dialog'
-import { Folder, Cpu, BarChart3, MessageSquare, Copy, CheckCircle2, AlertCircle, Settings, Clock, FileStack, HardDrive } from 'lucide-react'
-import { Button, TextField, Typography, Fade, Tooltip } from '@mui/material'
+import { Folder, Cpu, MessageSquare, Copy, CheckCircle2, AlertCircle, Settings, Clock, FileStack, HardDrive, Sparkles } from 'lucide-react'
+import { Button, TextField, Typography, Fade, Tooltip, LinearProgress } from '@mui/material'
 import { Treemap, type TreemapNode } from './Treemap'
 import { formatBytes, formatDuration } from '../utils/format'
 import { loadSettings } from '../services/ai'
+import { analyzeWithAI, deleteItem, type AnalysisResult } from '../services/ai-analysis'
+import { SuggestionCard } from './SuggestionCard'
 
 interface ScanResult {
     root: TreemapNode
@@ -21,11 +23,15 @@ function loadPromptInstruction(): string {
     try {
         const stored = localStorage.getItem(PROMPT_INSTRUCTION_KEY)
         return stored || '请根据以上占用，简要指出可安全清理或迁移的大项，并给出 1～3 条操作建议。'
-    } catch (e) { return '请根据以上占用，简要指出可安全清理或迁移的大项，并给出 1～3 条操作建议。' }
+    } catch { return '请根据以上占用，简要指出可安全清理或迁移的大项，并给出 1～3 条操作建议。' }
 }
 
 function savePromptInstruction(instruction: string): void {
-    try { localStorage.setItem(PROMPT_INSTRUCTION_KEY, instruction) } catch (e) {}
+    try {
+        localStorage.setItem(PROMPT_INSTRUCTION_KEY, instruction)
+    } catch {
+        // ignore storage errors
+    }
 }
 
 /** AI 提示面板 */
@@ -141,6 +147,12 @@ export function ExpertMode({ onOpenSettings }: { onOpenSettings?: () => void }) 
     const [viewMode, setViewMode] = useState<'disk' | 'ai-prompt'>('disk')
     const [shallowDirs, setShallowDirs] = useState(true)
     const openedSettingsForStandardRef = useRef(false)
+    
+    // 标准模式 AI 分析状态
+    const [aiAnalyzing, setAiAnalyzing] = useState(false)
+    const [aiProgress, setAiProgress] = useState('')
+    const [analysisResult, setAnalysisResult] = useState<AnalysisResult | null>(null)
+    const [deletedPaths, setDeletedPaths] = useState<Set<string>>(new Set())
 
     // 核心：权限检查
     const checkAdmin = useCallback(async () => {
@@ -155,23 +167,42 @@ export function ExpertMode({ onOpenSettings }: { onOpenSettings?: () => void }) 
     }, [])
 
     useEffect(() => {
-        void checkAdmin()
+        const t = setTimeout(() => { void checkAdmin() }, 0)
         let unlisten: (() => void) | undefined
-        getCurrentWindow().listen<[number, string]>('scan-progress', (e) => setProgressFiles(e.payload[0]))
+        getCurrentWindow().listen<[number, string]>('scan-progress', (ev) => setProgressFiles(ev.payload[0]))
             .then((fn) => { unlisten = fn })
-        return () => unlisten?.()
+        return () => {
+            clearTimeout(t)
+            unlisten?.()
+        }
     }, [checkAdmin])
 
     const runScan = useCallback(async (targetPath: string) => {
         if (!targetPath) return
-        setStatus('scanning'); setErrorMsg(''); setResult(null); setProgressFiles(0);
+        setStatus('scanning'); setErrorMsg(''); setResult(null); setProgressFiles(0); setAnalysisResult(null);
         try {
             const res = await invoke<ScanResult>('scan_path_command', { path: targetPath, shallow_dirs: shallowDirs })
             setResult(res); setStatus('done');
+            
+            // 标准模式：扫描完成后自动调用 AI 分析
+            if (isAdmin === false) {
+                setAiAnalyzing(true)
+                setAiProgress('准备 AI 分析...')
+                try {
+                    const summary = buildFileListSummary(res)
+                    const aiResult = await analyzeWithAI(summary, (msg) => setAiProgress(msg))
+                    setAnalysisResult(aiResult)
+                } catch (aiError) {
+                    setErrorMsg(`AI 分析失败: ${aiError}`)
+                } finally {
+                    setAiAnalyzing(false)
+                    setAiProgress('')
+                }
+            }
         } catch (e) {
             setStatus('error'); setErrorMsg(String(e));
         }
-    }, [shallowDirs])
+    }, [shallowDirs, isAdmin])
 
     const handleBrowseFolder = useCallback(async () => {
         const selected = await open({ directory: true, multiple: false });
@@ -180,6 +211,16 @@ export function ExpertMode({ onOpenSettings }: { onOpenSettings?: () => void }) 
             setPath(pathStr); await runScan(pathStr);
         }
     }, [runScan])
+
+    const handleDelete = useCallback(async (itemPath: string) => {
+        await deleteItem(itemPath)
+        setDeletedPaths(prev => new Set([...prev, itemPath]))
+    }, [])
+
+    const handleMove = useCallback(async (_itemPath: string) => {
+        // 预留迁移接口
+        throw new Error('迁移功能正在开发中')
+    }, [])
 
     // 核心：API 配置校验
     const standardModeNoApi = isAdmin === false && !loadSettings().apiKey?.trim()
@@ -340,35 +381,99 @@ export function ExpertMode({ onOpenSettings }: { onOpenSettings?: () => void }) 
                 </div>
             )}
 
-            {/* 扫描结果展示 */}
-            {result && (
-                <div className="flex-1 flex flex-col gap-4 min-h-0 animate-in slide-in-from-bottom-8 duration-700">
-                    <div className="flex-1 flex flex-col min-h-0 bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-slate-100 dark:border-gray-600 overflow-hidden">
-                        <div className="px-3 py-2 flex items-center justify-between border-b border-slate-100 dark:border-gray-600 shrink-0">
-                            <div className="bg-slate-200/50 dark:bg-gray-600/50 p-0.5 rounded-lg flex gap-0.5 border border-slate-200/80 dark:border-gray-600">
-                                <button onClick={() => setViewMode('disk')} className={`px-3 py-1 rounded-md text-[11px] font-semibold transition-all ${viewMode === 'disk' ? 'bg-white dark:bg-gray-600 text-secondary shadow-sm' : 'text-slate-500 dark:text-gray-400'}`}>分布视窗</button>
-                                <button onClick={() => setViewMode('ai-prompt')} className={`px-3 py-1 rounded-md text-[11px] font-semibold transition-all ${viewMode === 'ai-prompt' ? 'bg-secondary text-primary shadow-sm' : 'text-slate-500 dark:text-gray-400'}`}>AI 指令集</button>
-                            </div>
-                            {hoverNode && viewMode === 'disk' && (
-                                <div className="px-3 py-1.5 bg-secondary text-primary rounded-lg text-[11px] font-semibold flex gap-2 items-center">
-                                    <span className="truncate max-w-[200px] text-white/90">{hoverNode.name}</span>
-                                    <span className="bg-primary/20 px-1.5 rounded text-[10px] shrink-0">{formatBytes(hoverNode.size)}</span>
-                                </div>
-                            )}
+            {/* AI 分析中状态（标准模式） */}
+            {aiAnalyzing && (
+                <div className="bg-white dark:bg-gray-800 px-6 py-8 rounded-xl border border-slate-200 dark:border-gray-600 shadow-sm">
+                    <div className="flex flex-col items-center gap-4">
+                        <div className="relative">
+                            <Sparkles className="text-primary animate-pulse" size={40} />
+                            <div className="absolute inset-0 bg-primary/20 blur-xl rounded-full" />
                         </div>
-
-                        <div className="flex-1 min-h-0 relative">
-                            {viewMode === 'disk' ? (
-                                <div className="absolute inset-0 p-4">
-                                    <Treemap root={result.root} width={1000} height={500} onHover={setHoverNode} />
-                                </div>
-                            ) : (
-                                <div className="absolute inset-0 overflow-auto">
-                                    <AIPromptPanel result={result} buildPrompt={buildFileListSummary} />
-                                </div>
-                            )}
-                        </div>
+                        <Typography variant="body1" sx={{ fontWeight: 600, color: 'text.primary' }} className="dark:text-gray-200">
+                            {aiProgress || 'AI 正在分析...'}
+                        </Typography>
+                        <LinearProgress sx={{ width: '100%', borderRadius: 1 }} />
                     </div>
+                </div>
+            )}
+
+            {/* 扫描结果展示 */}
+            {result && !aiAnalyzing && (
+                <div className="flex-1 flex flex-col gap-4 min-h-0 animate-in slide-in-from-bottom-8 duration-700">
+                    {/* 标准模式：显示 AI 建议列表 */}
+                    {isAdmin === false ? (
+                        analysisResult ? (
+                            <div className="flex-1 flex flex-col gap-4 min-h-0 overflow-auto">
+                                {/* AI 分析摘要 */}
+                                <div className="bg-white dark:bg-gray-800 px-4 py-3 rounded-xl border border-slate-200 dark:border-gray-600 shadow-sm">
+                                    <div className="flex items-center justify-between">
+                                        <div className="flex items-center gap-2">
+                                            <Sparkles size={18} className="text-primary" />
+                                            <span className="text-sm font-semibold text-slate-700 dark:text-gray-200">
+                                                {analysisResult.summary}
+                                            </span>
+                                        </div>
+                                        {analysisResult.tokenUsage && (
+                                            <Tooltip title={`Prompt: ${analysisResult.tokenUsage.prompt_tokens} | Completion: ${analysisResult.tokenUsage.completion_tokens}`} arrow>
+                                                <span className="text-[10px] text-slate-400 dark:text-gray-500 font-mono">
+                                                    Token: {analysisResult.tokenUsage.total_tokens}
+                                                </span>
+                                            </Tooltip>
+                                        )}
+                                    </div>
+                                </div>
+
+                                {/* 建议列表 */}
+                                {analysisResult.suggestions.length > 0 ? (
+                                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+                                        {analysisResult.suggestions
+                                            .filter(s => !deletedPaths.has(s.path))
+                                            .map((suggestion, idx) => (
+                                                <SuggestionCard
+                                                    key={idx}
+                                                    suggestion={suggestion}
+                                                    onDelete={handleDelete}
+                                                    onMove={handleMove}
+                                                />
+                                            ))}
+                                    </div>
+                                ) : (
+                                    <div className="flex-1 flex flex-col items-center justify-center text-slate-400 dark:text-gray-500">
+                                        <CheckCircle2 size={48} className="mb-2" />
+                                        <Typography variant="body2">暂无清理建议，磁盘空间使用良好</Typography>
+                                    </div>
+                                )}
+                            </div>
+                        ) : null
+                    ) : (
+                        /* 开发者模式：显示原有的分布视图和 AI 指令 */
+                        <div className="flex-1 flex flex-col min-h-0 bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-slate-100 dark:border-gray-600 overflow-hidden">
+                            <div className="px-3 py-2 flex items-center justify-between border-b border-slate-100 dark:border-gray-600 shrink-0">
+                                <div className="bg-slate-200/50 dark:bg-gray-600/50 p-0.5 rounded-lg flex gap-0.5 border border-slate-200/80 dark:border-gray-600">
+                                    <button onClick={() => setViewMode('disk')} className={`px-3 py-1 rounded-md text-[11px] font-semibold transition-all ${viewMode === 'disk' ? 'bg-white dark:bg-gray-600 text-secondary shadow-sm' : 'text-slate-500 dark:text-gray-400'}`}>分布视窗</button>
+                                    <button onClick={() => setViewMode('ai-prompt')} className={`px-3 py-1 rounded-md text-[11px] font-semibold transition-all ${viewMode === 'ai-prompt' ? 'bg-secondary text-primary shadow-sm' : 'text-slate-500 dark:text-gray-400'}`}>AI 指令集</button>
+                                </div>
+                                {hoverNode && viewMode === 'disk' && (
+                                    <div className="px-3 py-1.5 bg-secondary text-primary rounded-lg text-[11px] font-semibold flex gap-2 items-center">
+                                        <span className="truncate max-w-[200px] text-white/90">{hoverNode.name}</span>
+                                        <span className="bg-primary/20 px-1.5 rounded text-[10px] shrink-0">{formatBytes(hoverNode.size)}</span>
+                                    </div>
+                                )}
+                            </div>
+
+                            <div className="flex-1 min-h-0 relative">
+                                {viewMode === 'disk' ? (
+                                    <div className="absolute inset-0 p-4">
+                                        <Treemap root={result.root} width={1000} height={500} onHover={setHoverNode} />
+                                    </div>
+                                ) : (
+                                    <div className="absolute inset-0 overflow-auto">
+                                        <AIPromptPanel result={result} buildPrompt={buildFileListSummary} />
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    )}
                 </div>
             )}
 
