@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react'
-import { Trash2, MoveRight, File, FolderOpen, Clock, HardDrive, AlertCircle, Check, X, Info } from 'lucide-react'
+import { Trash2, MoveRight, File, FolderOpen, Clock, HardDrive, AlertCircle, Check, X, Info, Cloud, Settings } from 'lucide-react'
 import { Button, Dialog, DialogTitle, DialogContent, DialogActions, Typography, Box, Chip, Checkbox, FormControlLabel } from '@mui/material'
 import type { CleanupSuggestion } from '../services/ai-analysis'
 import { readStorageFile, writeStorageFile } from '../services/storage'
+import { hasCloudStorageConfig, getDefaultCloudStorageConfig, CLOUD_STORAGE_PROVIDERS } from '../services/settings'
 
 const SKIP_CONFIRM_KEY = 'skip-action-confirm'
 
@@ -10,9 +11,10 @@ interface Props {
   suggestion: CleanupSuggestion
   onDelete: (path: string) => Promise<void>
   onMove: (path: string) => Promise<void>
+  onOpenCloudSettings?: () => void
 }
 
-export function SuggestionCard({ suggestion, onDelete, onMove }: Props) {
+export function SuggestionCard({ suggestion, onDelete, onMove, onOpenCloudSettings }: Props) {
   const [showConfirm, setShowConfirm] = useState(false)
   const [showDetail, setShowDetail] = useState(false)
   const [loading, setLoading] = useState(false)
@@ -20,6 +22,9 @@ export function SuggestionCard({ suggestion, onDelete, onMove }: Props) {
   const [success, setSuccess] = useState(false)
   const [skipConfirm, setSkipConfirm] = useState(false)
   const [dontAskAgain, setDontAskAgain] = useState(false)
+  const [hasCloudConfig, setHasCloudConfig] = useState(false)
+  const [cloudConfigName, setCloudConfigName] = useState<string | null>(null)
+  const [showNoConfigDialog, setShowNoConfigDialog] = useState(false)
 
   useEffect(() => {
     readStorageFile(SKIP_CONFIRM_KEY).then(val => {
@@ -27,8 +32,34 @@ export function SuggestionCard({ suggestion, onDelete, onMove }: Props) {
     })
   }, [])
 
+  // 检查云存储配置
+  useEffect(() => {
+    const checkCloudConfig = async () => {
+      const hasConfig = await hasCloudStorageConfig()
+      setHasCloudConfig(hasConfig)
+      
+      if (hasConfig) {
+        const config = await getDefaultCloudStorageConfig()
+        if (config) {
+          const providerInfo = CLOUD_STORAGE_PROVIDERS.find(p => p.id === config.provider)
+          setCloudConfigName(config.name || providerInfo?.name || config.provider)
+        }
+      }
+    }
+    checkCloudConfig()
+  }, [])
+
   const handleActionClick = async (e: React.MouseEvent) => {
     e.stopPropagation()
+    
+    // 如果是迁移操作，先检查云存储配置
+    if (suggestion.action === 'move') {
+      const hasConfig = await hasCloudStorageConfig()
+      if (!hasConfig) {
+        setShowNoConfigDialog(true)
+        return
+      }
+    }
     
     if (skipConfirm) {
       await executeAction()
@@ -136,7 +167,7 @@ export function SuggestionCard({ suggestion, onDelete, onMove }: Props) {
             <Button
               size="small"
               onClick={handleActionClick}
-              disabled={loading || (suggestion.action === 'move')}
+              disabled={loading}
               sx={{
                 minWidth: 'auto',
                 px: 1.5,
@@ -229,22 +260,21 @@ export function SuggestionCard({ suggestion, onDelete, onMove }: Props) {
                 </Typography>
               </Box>
 
-              {suggestion.action === 'move' && (
+              {suggestion.action === 'move' && hasCloudConfig && (
                 <Box 
                   sx={{ 
                     display: 'flex', 
                     alignItems: 'start', 
                     gap: 1, 
                     p: 1.5, 
-                    bgcolor: 'info.main', 
-                    color: 'white', 
+                    bgcolor: 'primary.main', 
+                    color: '#1A1A1A', 
                     borderRadius: '8px',
-                    opacity: 0.9
                   }}
                 >
-                  <AlertCircle size={14} className="shrink-0 mt-0.5" />
+                  <Cloud size={14} className="shrink-0 mt-0.5" />
                   <Typography variant="caption" sx={{ fontSize: '11px' }}>
-                    迁移功能正在开发中
+                    将迁移到：{cloudConfigName}
                   </Typography>
                 </Box>
               )}
@@ -313,7 +343,7 @@ export function SuggestionCard({ suggestion, onDelete, onMove }: Props) {
             </Button>
             <Button
               onClick={handleConfirm}
-              disabled={loading || (suggestion.action === 'move')}
+              disabled={loading}
               variant="contained"
               size="small"
               sx={{
@@ -470,23 +500,51 @@ export function SuggestionCard({ suggestion, onDelete, onMove }: Props) {
             </Box>
 
             {suggestion.action === 'move' && (
-              <Box 
-                sx={{ 
-                  display: 'flex', 
-                  alignItems: 'start', 
-                  gap: 1.5, 
-                  p: 2, 
-                  bgcolor: 'info.main', 
-                  color: 'white', 
-                  borderRadius: '10px', 
-                  opacity: 0.9 
-                }}
-              >
-                <AlertCircle size={16} className="shrink-0 mt-0.5" />
-                <Typography variant="body2" sx={{ fontSize: '12px' }}>
-                  迁移功能正在开发中，后续将支持自动迁移到网盘
-                </Typography>
-              </Box>
+              hasCloudConfig ? (
+                <Box 
+                  sx={{ 
+                    display: 'flex', 
+                    alignItems: 'start', 
+                    gap: 1.5, 
+                    p: 2, 
+                    bgcolor: 'primary.main', 
+                    color: '#1A1A1A', 
+                    borderRadius: '10px', 
+                  }}
+                >
+                  <Cloud size={16} className="shrink-0 mt-0.5" />
+                  <Box>
+                    <Typography variant="body2" sx={{ fontSize: '12px', fontWeight: 600 }}>
+                      将迁移到：{cloudConfigName}
+                    </Typography>
+                    <Typography variant="caption" sx={{ fontSize: '11px', opacity: 0.8 }}>
+                      文件将被移动到云存储
+                    </Typography>
+                  </Box>
+                </Box>
+              ) : (
+                <Box 
+                  sx={{ 
+                    display: 'flex', 
+                    alignItems: 'start', 
+                    gap: 1.5, 
+                    p: 2, 
+                    bgcolor: 'warning.main', 
+                    color: '#1A1A1A', 
+                    borderRadius: '10px', 
+                  }}
+                >
+                  <Settings size={16} className="shrink-0 mt-0.5" />
+                  <Box>
+                    <Typography variant="body2" sx={{ fontSize: '12px', fontWeight: 600 }}>
+                      尚未配置云存储
+                    </Typography>
+                    <Typography variant="caption" sx={{ fontSize: '11px', opacity: 0.8 }}>
+                      请先在设置中配置网盘服务
+                    </Typography>
+                  </Box>
+                </Box>
+              )
             )}
           </Box>
         </DialogContent>
@@ -509,7 +567,6 @@ export function SuggestionCard({ suggestion, onDelete, onMove }: Props) {
           </Button>
           <Button
             onClick={handleActionClick}
-            disabled={suggestion.action === 'move'}
             variant="contained"
             size="small"
             sx={{
@@ -531,6 +588,119 @@ export function SuggestionCard({ suggestion, onDelete, onMove }: Props) {
             }}
           >
             {actionLabel}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* 未配置云存储提示对话框 */}
+      <Dialog
+        open={showNoConfigDialog}
+        onClose={() => setShowNoConfigDialog(false)}
+        maxWidth="xs"
+        fullWidth
+        PaperProps={{
+          sx: {
+            borderRadius: '16px',
+            bgcolor: 'background.paper',
+          },
+          className: 'dark:!bg-gray-800'
+        }}
+      >
+        <DialogTitle sx={{ pb: 1, pt: 2.5, px: 3 }} className="dark:text-gray-100">
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+            <Box
+              sx={{
+                width: 40,
+                height: 40,
+                borderRadius: '12px',
+                bgcolor: 'warning.main',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}
+            >
+              <Cloud size={22} className="text-white" />
+            </Box>
+            <Typography variant="h6" component="span" sx={{ fontSize: '16px', fontWeight: 700 }}>
+              配置云存储
+            </Typography>
+          </Box>
+        </DialogTitle>
+
+        <DialogContent sx={{ py: 2, px: 3 }} className="dark:text-gray-100">
+          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+            <Typography variant="body2" sx={{ color: 'text.secondary', lineHeight: 1.6 }} className="dark:text-gray-300">
+              迁移功能需要先配置云存储服务。支持以下网盘：
+            </Typography>
+            
+            <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
+              <Chip label="Google Drive" size="small" sx={{ fontSize: '11px' }} />
+              <Chip label="OneDrive" size="small" sx={{ fontSize: '11px' }} />
+              <Chip label="Dropbox" size="small" sx={{ fontSize: '11px' }} />
+              <Chip label="阿里云盘" size="small" sx={{ fontSize: '11px' }} />
+              <Chip label="百度网盘" size="small" sx={{ fontSize: '11px' }} />
+              <Chip label="WebDAV" size="small" sx={{ fontSize: '11px' }} />
+            </Box>
+
+            <Box 
+              sx={{ 
+                display: 'flex', 
+                alignItems: 'start', 
+                gap: 1.5, 
+                p: 2, 
+                bgcolor: 'info.main', 
+                color: 'white', 
+                borderRadius: '10px',
+                opacity: 0.9,
+              }}
+            >
+              <HardDrive size={16} className="shrink-0 mt-0.5" />
+              <Typography variant="body2" sx={{ fontSize: '12px' }}>
+                NAS 用户可通过 WebDAV 协议连接
+              </Typography>
+            </Box>
+          </Box>
+        </DialogContent>
+
+        <DialogActions sx={{ borderTop: 1, borderColor: 'divider', p: 2, gap: 1 }} className="dark:!border-gray-700">
+          <Button
+            onClick={() => setShowNoConfigDialog(false)}
+            variant="outlined"
+            size="small"
+            sx={{
+              textTransform: 'none',
+              borderRadius: '8px',
+              fontSize: '12px',
+              color: 'text.secondary',
+              borderColor: 'divider',
+            }}
+            className="dark:!border-gray-600 dark:!text-gray-300"
+          >
+            稍后
+          </Button>
+          <Button
+            onClick={() => {
+              setShowNoConfigDialog(false)
+              onOpenCloudSettings?.()
+            }}
+            variant="contained"
+            size="small"
+            startIcon={<Settings size={14} />}
+            sx={{
+              textTransform: 'none',
+              borderRadius: '8px',
+              bgcolor: 'primary.main',
+              color: '#1A1A1A',
+              fontSize: '12px',
+              fontWeight: 700,
+              boxShadow: 'none',
+              '&:hover': {
+                bgcolor: 'primary.dark',
+                boxShadow: 'none',
+              },
+            }}
+          >
+            去配置
           </Button>
         </DialogActions>
       </Dialog>

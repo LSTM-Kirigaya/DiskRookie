@@ -4,7 +4,7 @@ import { getCurrentWindow } from '@tauri-apps/api/window'
 import { open } from '@tauri-apps/plugin-dialog'
 import { Folder, Cpu, MessageSquare, Copy, CheckCircle2, AlertCircle, Settings, Clock, FileStack, HardDrive, Sparkles, Save } from 'lucide-react'
 import { Button, TextField, Typography, Fade, Tooltip, Dialog, DialogTitle, DialogContent, DialogActions } from '@mui/material'
-import { PieChart, Pie, Cell, ResponsiveContainer, Sector } from 'recharts'
+import { PieChart, Pie, Cell, ResponsiveContainer } from 'recharts'
 import { Treemap, type TreemapNode } from './Treemap'
 import { formatBytes, formatDuration } from '../utils/format'
 import { loadSettings } from '../services/ai'
@@ -12,7 +12,7 @@ import { analyzeWithAI, deleteItem, type AnalysisResult } from '../services/ai-a
 import { SuggestionCard } from './SuggestionCard'
 import { saveSnapshot, type Snapshot } from '../services/snapshot'
 import { readStorageFile, writeStorageFile } from '../services/storage'
-import { loadAppSettings } from '../services/settings'
+import { loadAppSettings, hasCloudStorageConfig, getDefaultCloudStorageConfig } from '../services/settings'
 
 interface ScanResult {
     root: TreemapNode
@@ -110,7 +110,7 @@ function AIPromptPanel({ result }: { result: ScanResult }) {
                     </div>
                 </div>
                 <div className="flex flex-col gap-2">
-                    <span className="text-[11px] font-bold text-slate-400 dark:text-gray-400 uppercase tracking-widest ml-1">分析指令定制</span>
+                    <span className="text-[11px] font-bold text-slate-400 dark:text-gray-400 uppercase tracking-widest ml-1">自定义提示词</span>
                     <TextField
                         multiline fullWidth value={instruction}
                         onChange={(e) => setInstruction(e.target.value)}
@@ -192,7 +192,7 @@ export function ExpertMode({ onOpenSettings, loadedSnapshot, onSnapshotLoaded }:
     const [status, setStatus] = useState<'idle' | 'scanning' | 'done' | 'error'>('idle')
     const [errorMsg, setErrorMsg] = useState('')
     const [result, setResult] = useState<ScanResult | null>(null)
-    const [isAdmin, setIsAdmin] = useState<boolean | null>(null)
+    const [isAdmin, setIsAdmin] = useState<boolean | null>(false)
     const [hoverNode, setHoverNode] = useState<TreemapNode | null>(null)
     const [progressFiles, setProgressFiles] = useState(0)
     const [viewMode, setViewMode] = useState<'disk' | 'ai-prompt'>('disk')
@@ -211,28 +211,14 @@ export function ExpertMode({ onOpenSettings, loadedSnapshot, onSnapshotLoaded }:
     const [showSaveDialog, setShowSaveDialog] = useState(false)
     const [snapshotName, setSnapshotName] = useState('')
 
-    // 核心：权限检查
-    const checkAdmin = useCallback(async () => {
-        try {
-            const ok = await invoke<boolean>('check_admin_permission')
-            setIsAdmin(ok)
-            return ok
-        } catch {
-            setIsAdmin(false)
-            return false
-        }
-    }, [])
-
     useEffect(() => {
-        const t = setTimeout(() => { void checkAdmin() }, 0)
         let unlisten: (() => void) | undefined
         getCurrentWindow().listen<[number, string]>('scan-progress', (ev) => setProgressFiles(ev.payload[0]))
             .then((fn) => { unlisten = fn })
         return () => {
-            clearTimeout(t)
             unlisten?.()
         }
-    }, [checkAdmin])
+    }, [])
 
     const runScan = useCallback(async (targetPath: string) => {
         if (!targetPath) return
@@ -637,77 +623,29 @@ export function ExpertMode({ onOpenSettings, loadedSnapshot, onSnapshotLoaded }:
                                         const movePercent = ((moveSize / totalSize) * 100).toFixed(1)
                                         const remainPercent = ((remainSize / totalSize) * 100).toFixed(1)
                                         
-                                        // 三部分数据：删除、迁移、保留
-                                        const pieData = [
-                                            { name: '删除', value: deleteSize, count: deleteSuggestions.length, percent: deletePercent, action: 'delete' as const, color: '#ef4444' },
-                                            { name: '迁移', value: moveSize, count: moveSuggestions.length, percent: movePercent, action: 'move' as const, color: '#3b82f6' },
-                                            { name: '保留', value: remainSize, count: 0, percent: remainPercent, action: 'keep' as const, color: '#e2e8f0' },
-                                        ].filter(d => d.value > 0)
+                                        // 检测是否为暗色模式
+                                        const isDarkMode = document.documentElement.classList.contains('dark')
                                         
-                                        // 自定义扇区渲染函数（带圆角和动画）
-                                        const renderActiveShape = (props: any) => {
-                                            const {
-                                                cx, cy, innerRadius, outerRadius, startAngle, endAngle,
-                                                fill, payload, index
-                                            } = props
-                                            
-                                            const isHovered = hoveredPieIndex === index
-                                            const isActive = actionFilter === payload.action
-                                            const isKeep = payload.action === 'keep'
-                                            
-                                            // 动态计算外半径
-                                            const dynamicOuterRadius = isHovered && !isKeep ? outerRadius + 10 : outerRadius
-                                            const dynamicInnerRadius = isHovered && !isKeep ? innerRadius - 2 : innerRadius
-                                            
-                                            // 计算透明度
-                                            const opacity = isKeep ? 0.35 : 
-                                                (actionFilter === 'all' || isActive ? 1 : 0.25)
-                                            
-                                            return (
-                                                <g>
-                                                    <Sector
-                                                        cx={cx}
-                                                        cy={cy}
-                                                        innerRadius={dynamicInnerRadius}
-                                                        outerRadius={dynamicOuterRadius}
-                                                        startAngle={startAngle}
-                                                        endAngle={endAngle}
-                                                        fill={fill}
-                                                        opacity={opacity}
-                                                        cornerRadius={pieData.length > 1 ? 6 : 0}
-                                                        style={{
-                                                            filter: isHovered && !isKeep 
-                                                                ? 'drop-shadow(0 6px 12px rgba(0,0,0,0.25))' 
-                                                                : 'none',
-                                                            cursor: isKeep ? 'default' : 'pointer',
-                                                            transition: 'all 0.4s cubic-bezier(0.34, 1.56, 0.64, 1)',
-                                                        }}
-                                                    />
-                                                    {/* Hover 时的高亮描边 */}
-                                                    {isHovered && !isKeep && (
-                                                        <Sector
-                                                            cx={cx}
-                                                            cy={cy}
-                                                            innerRadius={dynamicInnerRadius - 2}
-                                                            outerRadius={dynamicOuterRadius + 2}
-                                                            startAngle={startAngle}
-                                                            endAngle={endAngle}
-                                                            fill="transparent"
-                                                            stroke={fill}
-                                                            strokeWidth={2}
-                                                            cornerRadius={pieData.length > 1 ? 8 : 0}
-                                                            opacity={0.5}
-                                                            style={{
-                                                                transition: 'all 0.4s cubic-bezier(0.34, 1.56, 0.64, 1)',
-                                                            }}
-                                                        />
-                                                    )}
-                                                </g>
-                                            )
+                                        // 定义颜色常量 - 删除(红)、迁移(蓝)、保留(灰)
+                                        const colors = {
+                                            delete: '#ef4444',
+                                            move: '#3b82f6',
+                                            keep: isDarkMode ? '#4b5563' : '#e2e8f0',  // 暗色模式下用更深的灰色
                                         }
                                         
+                                        // 三部分数据：删除、迁移、保留
+                                        const pieData = [
+                                            { name: '删除', value: deleteSize, count: deleteSuggestions.length, percent: deletePercent, action: 'delete' as const, color: colors.delete },
+                                            { name: '迁移', value: moveSize, count: moveSuggestions.length, percent: movePercent, action: 'move' as const, color: colors.move },
+                                            { name: '保留', value: remainSize, count: 0, percent: remainPercent, action: 'keep' as const, color: colors.keep },
+                                        ].filter(d => d.value > 0)
+                                        
+                                        // 非线性缓动函数
+                                        const springEasing = 'cubic-bezier(0.34, 1.56, 0.64, 1)'  // 弹性回弹
+                                        const smoothEasing = 'cubic-bezier(0.25, 0.46, 0.45, 0.94)'  // 平滑减速
+                                        
                                         return (
-                                            <div className="bg-white dark:bg-gray-800 px-4 py-6 rounded-xl border border-slate-200 dark:border-gray-600 shadow-sm flex flex-col items-center gap-3">
+                                            <div className="bg-white dark:bg-gray-800 px-4 py-6 rounded-xl border border-slate-200 dark:border-gray-600 shadow-sm dark:shadow-gray-900/20 flex flex-col items-center gap-3">
                                                 <h3 className="text-sm font-semibold text-slate-700 dark:text-gray-200 self-start">建议操作</h3>
                                                 <div className="relative w-full" style={{ height: 200 }}>
                                                     <ResponsiveContainer width="100%" height="100%">
@@ -716,12 +654,11 @@ export function ExpertMode({ onOpenSettings, loadedSnapshot, onSnapshotLoaded }:
                                                                 data={pieData}
                                                                 cx="50%"
                                                                 cy="50%"
-                                                                innerRadius={45}
+                                                                innerRadius={hoveredPieIndex !== null && pieData[hoveredPieIndex]?.action !== 'keep' ? 42 : 45}
                                                                 outerRadius={65}
                                                                 paddingAngle={pieData.length > 1 ? 4 : 0}
                                                                 dataKey="value"
-                                                                activeIndex={pieData.map((_, i) => i)}
-                                                                activeShape={renderActiveShape}
+                                                                cornerRadius={6}
                                                                 onClick={(_, index) => {
                                                                     const clickedAction = pieData[index].action
                                                                     if (clickedAction === 'keep') return
@@ -737,30 +674,105 @@ export function ExpertMode({ onOpenSettings, loadedSnapshot, onSnapshotLoaded }:
                                                                 animationDuration={800}
                                                                 animationEasing="ease-out"
                                                             >
-                                                                {pieData.map((entry, index) => (
-                                                                    <Cell 
-                                                                        key={`cell-${index}`} 
-                                                                        fill={entry.color}
-                                                                    />
-                                                                ))}
+                                                                {pieData.map((entry, index) => {
+                                                                    const isHovered = hoveredPieIndex === index
+                                                                    const isActive = actionFilter === entry.action
+                                                                    const isKeep = entry.action === 'keep'
+                                                                    const opacity = isKeep 
+                                                                        ? (isDarkMode ? 0.6 : 0.4)
+                                                                        : (actionFilter === 'all' || isActive ? 1 : 0.3)
+                                                                    
+                                                                    return (
+                                                                        <Cell 
+                                                                            key={`cell-${index}`} 
+                                                                            fill={entry.color}
+                                                                            opacity={opacity}
+                                                                            stroke={isHovered && !isKeep ? (isDarkMode ? 'rgba(255,255,255,0.4)' : 'rgba(255,255,255,0.9)') : 'none'}
+                                                                            strokeWidth={isHovered && !isKeep ? 3 : 0}
+                                                                            style={{ 
+                                                                                outline: 'none',
+                                                                                cursor: isKeep ? 'default' : 'pointer',
+                                                                                filter: isHovered && !isKeep 
+                                                                                    ? `drop-shadow(0 4px 12px ${entry.color}60)` 
+                                                                                    : 'none',
+                                                                                transition: `all 0.5s ${springEasing}`,
+                                                                            }}
+                                                                        />
+                                                                    )
+                                                                })}
                                                             </Pie>
                                                         </PieChart>
                                                     </ResponsiveContainer>
-                                                    {/* 中心文字 */}
+                                                    {/* 中心文字 - 根据 hover 状态显示不同内容 */}
                                                     <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
                                                         <div className="text-center">
-                                                            <div 
-                                                                className="text-2xl font-bold text-slate-700 dark:text-gray-200"
-                                                                style={{
-                                                                    transition: 'transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1)',
-                                                                    transform: hoveredPieIndex !== null && pieData[hoveredPieIndex]?.action !== 'keep' 
-                                                                        ? 'scale(1.1)' 
-                                                                        : 'scale(1)',
-                                                                }}
-                                                            >
-                                                                {(parseFloat(deletePercent) + parseFloat(movePercent)).toFixed(1)}%
-                                                            </div>
-                                                            <div className="text-xs text-slate-500 dark:text-gray-400">可清理</div>
+                                                            {(() => {
+                                                                const hoveredAction = hoveredPieIndex !== null ? pieData[hoveredPieIndex]?.action : null
+                                                                const activeAction = actionFilter !== 'all' ? actionFilter : null
+                                                                const displayAction = hoveredAction && hoveredAction !== 'keep' ? hoveredAction : activeAction
+                                                                
+                                                                if (displayAction === 'delete') {
+                                                                    return (
+                                                                        <>
+                                                                            <div 
+                                                                                className="text-2xl font-bold"
+                                                                                style={{ 
+                                                                                    color: colors.delete,
+                                                                                    transition: `all 0.3s ${smoothEasing}`,
+                                                                                }}
+                                                                            >
+                                                                                {deletePercent}%
+                                                                            </div>
+                                                                            <div 
+                                                                                className="text-xs font-medium"
+                                                                                style={{ 
+                                                                                    color: colors.delete,
+                                                                                    opacity: 0.8,
+                                                                                    transition: `all 0.3s ${smoothEasing}`,
+                                                                                }}
+                                                                            >
+                                                                                待删除
+                                                                            </div>
+                                                                        </>
+                                                                    )
+                                                                } else if (displayAction === 'move') {
+                                                                    return (
+                                                                        <>
+                                                                            <div 
+                                                                                className="text-2xl font-bold"
+                                                                                style={{ 
+                                                                                    color: colors.move,
+                                                                                    transition: `all 0.3s ${smoothEasing}`,
+                                                                                }}
+                                                                            >
+                                                                                {movePercent}%
+                                                                            </div>
+                                                                            <div 
+                                                                                className="text-xs font-medium"
+                                                                                style={{ 
+                                                                                    color: colors.move,
+                                                                                    opacity: 0.8,
+                                                                                    transition: `all 0.3s ${smoothEasing}`,
+                                                                                }}
+                                                                            >
+                                                                                待迁移
+                                                                            </div>
+                                                                        </>
+                                                                    )
+                                                                } else {
+                                                                    return (
+                                                                        <>
+                                                                            <div 
+                                                                                className="text-2xl font-bold text-slate-700 dark:text-gray-100"
+                                                                                style={{ transition: `all 0.3s ${smoothEasing}` }}
+                                                                            >
+                                                                                {(parseFloat(deletePercent) + parseFloat(movePercent)).toFixed(1)}%
+                                                                            </div>
+                                                                            <div className="text-xs text-slate-500 dark:text-gray-400">可清理</div>
+                                                                        </>
+                                                                    )
+                                                                }
+                                                            })()}
                                                         </div>
                                                     </div>
                                                 </div>
@@ -777,23 +789,28 @@ export function ExpertMode({ onOpenSettings, loadedSnapshot, onSnapshotLoaded }:
                                                             }}
                                                             onMouseEnter={() => setHoveredPieIndex(index)}
                                                             onMouseLeave={() => setHoveredPieIndex(null)}
-                                                            className={`flex items-center justify-between px-3 py-2.5 rounded-xl transition-all duration-300 ${
+                                                            className={`flex items-center justify-between px-3 py-2.5 rounded-xl border-2 ${
                                                                 actionFilter === 'all' || actionFilter === item.action
-                                                                    ? 'bg-slate-100 dark:bg-gray-700'
-                                                                    : 'bg-slate-50 dark:bg-gray-800/50 opacity-50'
+                                                                    ? 'bg-slate-100 dark:bg-gray-700/80 border-transparent'
+                                                                    : 'bg-slate-50 dark:bg-gray-800/50 opacity-50 border-transparent'
                                                             }`}
                                                             style={{
-                                                                transform: hoveredPieIndex === index ? 'scale(1.02)' : 'scale(1)',
-                                                                boxShadow: hoveredPieIndex === index ? `0 4px 12px ${item.color}30` : 'none',
-                                                                transition: 'all 0.35s cubic-bezier(0.34, 1.56, 0.64, 1)',
+                                                                transform: hoveredPieIndex === index ? 'scale(1.03) translateY(-2px)' : 'scale(1) translateY(0)',
+                                                                boxShadow: hoveredPieIndex === index 
+                                                                    ? `0 8px 24px ${item.color}40, 0 0 0 2px ${item.color}30` 
+                                                                    : 'none',
+                                                                borderColor: hoveredPieIndex === index ? `${item.color}50` : 'transparent',
+                                                                transition: `all 0.4s ${springEasing}`,
                                                             }}
                                                         >
                                                             <div className="flex items-center gap-2">
                                                                 <div 
-                                                                    className="w-3 h-3 rounded-full transition-transform duration-300"
+                                                                    className="w-3 h-3 rounded-full"
                                                                     style={{ 
                                                                         backgroundColor: item.color,
-                                                                        transform: hoveredPieIndex === index ? 'scale(1.3)' : 'scale(1)',
+                                                                        transform: hoveredPieIndex === index ? 'scale(1.4)' : 'scale(1)',
+                                                                        boxShadow: hoveredPieIndex === index ? `0 0 8px ${item.color}80` : 'none',
+                                                                        transition: `all 0.4s ${springEasing}`,
                                                                     }}
                                                                 ></div>
                                                                 <span className="text-sm font-medium text-slate-700 dark:text-gray-200">
@@ -801,7 +818,13 @@ export function ExpertMode({ onOpenSettings, loadedSnapshot, onSnapshotLoaded }:
                                                                 </span>
                                                             </div>
                                                             <div className="flex flex-col items-end">
-                                                                <span className="text-lg font-bold text-slate-700 dark:text-gray-200">
+                                                                <span 
+                                                                    className="text-lg font-bold text-slate-700 dark:text-gray-100"
+                                                                    style={{
+                                                                        color: hoveredPieIndex === index ? item.color : undefined,
+                                                                        transition: `color 0.3s ${smoothEasing}`,
+                                                                    }}
+                                                                >
                                                                     {item.percent}%
                                                                 </span>
                                                                 <span className="text-xs text-slate-500 dark:text-gray-400">
@@ -810,11 +833,14 @@ export function ExpertMode({ onOpenSettings, loadedSnapshot, onSnapshotLoaded }:
                                                             </div>
                                                         </button>
                                                     ))}
-                                                    {/* 保留部分显示 */}
+                                                    {/* 保留部分显示 - 使用与饼图一致的颜色 */}
                                                     {pieData.find(d => d.action === 'keep') && (
-                                                        <div className="flex items-center justify-between px-3 py-2 text-slate-400 dark:text-gray-500">
+                                                        <div className="flex items-center justify-between px-3 py-2 text-slate-400 dark:text-gray-400">
                                                             <div className="flex items-center gap-2">
-                                                                <div className="w-2 h-2 rounded-full bg-slate-300 dark:bg-gray-600"></div>
+                                                                <div 
+                                                                    className="w-2 h-2 rounded-full"
+                                                                    style={{ backgroundColor: colors.keep }}
+                                                                ></div>
                                                                 <span className="text-xs">保留</span>
                                                             </div>
                                                             <span className="text-xs">{remainPercent}%</span>
@@ -824,7 +850,16 @@ export function ExpertMode({ onOpenSettings, loadedSnapshot, onSnapshotLoaded }:
                                                 {actionFilter !== 'all' && (
                                                     <button
                                                         onClick={() => setActionFilter('all')}
-                                                        className="text-xs text-primary hover:underline mt-1 transition-all duration-200 hover:scale-105"
+                                                        className="text-xs text-primary hover:underline mt-1"
+                                                        style={{
+                                                            transition: `all 0.3s ${smoothEasing}`,
+                                                        }}
+                                                        onMouseEnter={(e) => {
+                                                            e.currentTarget.style.transform = 'scale(1.05)'
+                                                        }}
+                                                        onMouseLeave={(e) => {
+                                                            e.currentTarget.style.transform = 'scale(1)'
+                                                        }}
                                                     >
                                                         显示全部
                                                     </button>
