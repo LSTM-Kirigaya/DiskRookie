@@ -51,6 +51,14 @@ function App() {
     setTasks(prev => [...prev, task])
   }, [])
 
+  // 文件删除通知回调（供子组件调用）
+  const onFileDeletedRef = useRef<((path: string) => void) | null>(null)
+
+  // 设置文件删除通知回调
+  const setOnFileDeleted = useCallback((callback: ((path: string) => void) | null) => {
+    onFileDeletedRef.current = callback
+  }, [])
+
   // 添加迁移任务（供子组件调用）
   const addMigrateTask = useCallback((
     sourcePath: string,
@@ -173,8 +181,17 @@ function App() {
             if (!config.refreshToken) {
               throw new Error(`${config.name} 登录已过期，请重新登录`)
             }
-            const newTokenData = await refreshGoogleToken(config.refreshToken)
-            accessToken = newTokenData.access_token
+            try {
+              const newTokenData = await refreshGoogleToken(config.refreshToken)
+              accessToken = newTokenData.access_token
+            } catch (e) {
+              // token 刷新失败，可能是网络问题或 token 已失效
+              const errorMsg = String(e)
+              if (errorMsg.includes('401') || errorMsg.includes('403') || errorMsg.includes('invalid_grant')) {
+                throw new Error(`${config.name} 登录已过期，请重新登录`)
+              }
+              throw new Error(`${config.name} token 刷新失败: ${errorMsg}`)
+            }
           }
         }
 
@@ -215,6 +232,10 @@ function App() {
               completedAt: Date.now(),
               sourceDeleted: anySourceDeleted,
             })
+            // 如果源文件已被删除，通知 ExpertMode 组件更新文件列表
+            if (anySourceDeleted && onFileDeletedRef.current) {
+              onFileDeletedRef.current(pendingTask.sourcePath)
+            }
             // 发送系统通知
             notifyMigrateSuccess(
               pendingTask.fileName,
@@ -745,6 +766,8 @@ function App() {
             onSnapshotLoaded={() => setLoadedSnapshot(null)}
             settingsSavedTrigger={settingsSavedTrigger}
             onAddMigrateTask={addMigrateTask}
+            onFileDeleted={setOnFileDeleted}
+            tasks={tasks}
           />
         </main>
       </div>

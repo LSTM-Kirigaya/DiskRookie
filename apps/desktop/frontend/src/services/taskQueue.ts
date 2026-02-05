@@ -185,7 +185,9 @@ export function formatFileSize(bytes: number): string {
 
 // 格式化时间
 export function formatTime(ms: number): string {
-  const seconds = Math.floor(ms / 1000)
+  // 确保时间不为负数
+  const positiveMs = Math.max(0, ms)
+  const seconds = Math.floor(positiveMs / 1000)
   const minutes = Math.floor(seconds / 60)
   const hours = Math.floor(minutes / 60)
   

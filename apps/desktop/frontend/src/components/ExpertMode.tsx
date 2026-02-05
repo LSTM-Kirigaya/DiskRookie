@@ -4,7 +4,7 @@ import { getCurrentWindow } from '@tauri-apps/api/window'
 import { open } from '@tauri-apps/plugin-dialog'
 import { showNotification } from '../services/notification'
 import { Folder, Cpu, MessageSquare, Copy, CheckCircle2, AlertCircle, Settings, Clock, FileStack, HardDrive, Sparkles, Save, Cloud, Play } from 'lucide-react'
-import { Button, TextField, Typography, Fade, Tooltip, Dialog, DialogTitle, DialogContent, DialogActions } from '@mui/material'
+import { Button, TextField, Typography, Fade, Tooltip, Dialog, DialogTitle, DialogContent, DialogActions, Slider, Box, FormHelperText } from '@mui/material'
 import { PieChart, Pie, Cell, ResponsiveContainer } from 'recharts'
 import { Treemap, type TreemapNode } from './Treemap'
 import { formatBytes, formatDuration } from '../utils/format'
@@ -15,6 +15,7 @@ import { saveSnapshot, type Snapshot } from '../services/snapshot'
 import { readStorageFile, writeStorageFile } from '../services/storage'
 import { loadAppSettings, getEnabledCloudStorageConfigs, CLOUD_STORAGE_PROVIDERS, type CloudStorageConfig } from '../services/settings'
 import { CloudStorageSelector } from './CloudStorageSelector'
+import type { Task } from '../services/taskQueue'
 
 interface ScanResult {
     root: TreemapNode
@@ -25,6 +26,8 @@ interface ScanResult {
 
 const PROMPT_INSTRUCTION_FILE = 'prompt-instruction.txt'
 const DEFAULT_PROMPT_INSTRUCTION = '请根据以上占用，简要指出可安全清理或迁移的大项，并给出操作建议。'
+const FILE_COUNT_FILE = 'prompt-file-count.txt'
+const DEFAULT_FILE_COUNT = 100
 
 async function loadPromptInstruction(): Promise<string> {
     try {
@@ -41,15 +44,73 @@ async function savePromptInstruction(instruction: string): Promise<void> {
     }
 }
 
+async function loadFileCount(maxFileCount: number): Promise<number> {
+    try {
+        const stored = await readStorageFile(FILE_COUNT_FILE)
+        const count = parseInt(stored, 10)
+        if (!isNaN(count) && count >= 10 && count <= maxFileCount) {
+            return count
+        }
+        return Math.min(DEFAULT_FILE_COUNT, maxFileCount)
+    } catch {
+        return Math.min(DEFAULT_FILE_COUNT, maxFileCount)
+    }
+}
+
+async function saveFileCount(fileCount: number): Promise<void> {
+    try {
+        await writeStorageFile(FILE_COUNT_FILE, fileCount.toString())
+    } catch {
+        // ignore storage errors
+    }
+}
+
 /** AI 提示面板 */
 function AIPromptPanel({ result }: { result: ScanResult }) {
     const [fileListSummary, setFileListSummary] = useState('')
     const [instruction, setInstruction] = useState(DEFAULT_PROMPT_INSTRUCTION)
     const [copied, setCopied] = useState(false)
+    // 文件数量滑块值，默认100，范围10到扫描到的文件数量
+    const maxFileCount = Math.max(10, result.file_count)
+    const [fileCount, setFileCount] = useState(() => Math.min(100, maxFileCount))
 
+    // 加载保存的文件数量（仅在 maxFileCount 变化时）
     useEffect(() => {
-        buildFileListSummary(result).then(setFileListSummary)
-    }, [result])
+        let cancelled = false
+        loadFileCount(maxFileCount).then(count => {
+            if (!cancelled) {
+                setFileCount(count)
+            }
+        })
+        return () => {
+            cancelled = true
+        }
+    }, [maxFileCount])
+
+    // 保存文件数量到本地
+    useEffect(() => {
+        if (fileCount >= 10 && fileCount <= maxFileCount) {
+            void saveFileCount(fileCount)
+        }
+    }, [fileCount, maxFileCount])
+
+    // 当 result 或 fileCount 改变时，重新生成摘要
+    useEffect(() => {
+        let cancelled = false
+        // 使用 fileCount 参数，确保表格行数变化时能正确更新
+
+        
+        buildFileListSummary(result, fileCount).then(summary => {
+            
+            if (!cancelled) {
+                setFileListSummary(summary)
+            }
+        })
+        return () => {
+            cancelled = true
+        }
+        // 明确列出所有依赖项，确保 fileCount 变化时能触发更新
+    }, [result.file_count, result.total_size, result.scan_time_ms, fileCount, result])
 
     useEffect(() => {
         loadPromptInstruction().then(setInstruction)
@@ -69,45 +130,90 @@ function AIPromptPanel({ result }: { result: ScanResult }) {
 
     return (
         <div className="flex flex-col p-6 gap-6 bg-white dark:bg-gray-800 rounded-3xl h-full animate-in fade-in duration-500">
-            <div className="flex justify-between items-center">
-                <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-2xl bg-primary/10 flex items-center justify-center text-primary">
-                        <MessageSquare size={20} />
+            <div className="flex flex-col gap-3">
+                <div className="flex justify-between items-center">
+                    <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 rounded-2xl bg-primary/10 flex items-center justify-center text-primary">
+                            <MessageSquare size={20} />
+                        </div>
+                        <div>
+                            <Typography variant="subtitle2" sx={{ fontWeight: 800, color: 'secondary.main' }}>AI 分析建议生成</Typography>
+                            <Typography variant="caption" sx={{ color: 'text.secondary' }}>数据流已就绪</Typography>
+                        </div>
                     </div>
-                    <div>
-                        <Typography variant="subtitle2" sx={{ fontWeight: 800, color: 'secondary.main' }}>AI 分析建议生成</Typography>
-                        <Typography variant="caption" sx={{ color: 'text.secondary' }}>数据流已就绪</Typography>
-                    </div>
-                </div>
-                <Button
-                    onClick={copy}
-                    variant="contained"
-                    size="small"
-                    startIcon={copied ? <CheckCircle2 size={14} /> : <Copy size={14} />}
-                    sx={{
-                        borderRadius: '10px',
-                        px: 3,
-                        py: 0.9,
-                        textTransform: 'none',
-                        bgcolor: copied ? '#4caf50' : 'primary.main',
-                        color: '#1A1A1A',
-                        fontWeight: 700,
-                        fontSize: '12px',
-                        boxShadow: 'none',
-                        '&:hover': {
-                            bgcolor: copied ? '#45a049' : 'primary.dark',
+                    <Button
+                        onClick={copy}
+                        variant="contained"
+                        size="small"
+                        startIcon={copied ? <CheckCircle2 size={14} /> : <Copy size={14} />}
+                        sx={{
+                            borderRadius: '10px',
+                            px: 3,
+                            py: 0.9,
+                            textTransform: 'none',
+                            bgcolor: copied ? '#4caf50' : 'primary.main',
                             color: '#1A1A1A',
-                        }
-                    }}
-                >
-                    {copied ? '已复制' : '复制全文本'}
-                </Button>
+                            fontWeight: 700,
+                            fontSize: '12px',
+                            boxShadow: 'none',
+                            '&:hover': {
+                                bgcolor: copied ? '#45a049' : 'primary.dark',
+                                color: '#1A1A1A',
+                            }
+                        }}
+                    >
+                        {copied ? '已复制' : '复制全文本'}
+                    </Button>
+                </div>
+                {/* 文件数量滑块 - 移动到顶部 */}
+                <Box sx={{ px: 2, py: 1.5, bgcolor: 'action.hover', borderRadius: '12px', border: '1px solid', borderColor: 'divider' }} className="dark:!bg-gray-700/30 dark:!border-gray-600">
+                    <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
+                        <Typography variant="caption" sx={{ color: 'text.secondary' }}>
+                            表格行数
+                        </Typography>
+                        <Typography variant="caption" sx={{ color: 'text.primary', fontSize: '11px', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>
+                            {fileCount}
+                        </Typography>
+                    </Box>
+                    <Slider
+                        min={10}
+                        max={maxFileCount}
+                        step={1}
+                        value={fileCount}
+                        onChange={(_, value) => setFileCount(value as number)}
+                        sx={{ 
+                            color: 'primary.main',
+                            height: 4,
+                            '& .MuiSlider-thumb': {
+                                width: 14,
+                                height: 14,
+                            },
+                            '& .MuiSlider-track': {
+                                height: 4,
+                            },
+                            '& .MuiSlider-rail': {
+                                height: 4,
+                            },
+                        }}
+                        marks={[
+                            { value: 10, label: '10' },
+                            ...(maxFileCount >= 100 ? [{ value: 100, label: '100' }] : []),
+                            ...(maxFileCount > 100 ? [{ value: maxFileCount, label: maxFileCount.toString() }] : 
+                                 maxFileCount < 100 ? [{ value: maxFileCount, label: maxFileCount.toString() }] : []),
+                        ]}
+                    />
+                    <FormHelperText sx={{ fontSize: '10px', m: 0, mt: 0.5, color: 'text.secondary' }}>
+                        控制摘要表格中显示的文件行数（共 {result.file_count} 个文件）
+                    </FormHelperText>
+                </Box>
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 flex-1 min-h-0">
                 <div className="flex flex-col gap-2">
-                    <span className="text-[11px] font-bold text-slate-400 dark:text-gray-400 uppercase tracking-widest ml-1">磁盘占用摘要</span>
-                    <div className="bg-slate-50 dark:bg-gray-700/50 rounded-2xl p-4 border border-slate-100 dark:border-gray-600 flex-1 overflow-auto">
+                    <div className="flex items-center justify-between">
+                        <span className="text-[11px] font-bold text-slate-400 dark:text-gray-400 uppercase tracking-widest ml-1">磁盘占用摘要</span>
+                    </div>
+                    <div className="bg-slate-50 dark:bg-gray-700/50 rounded-2xl p-4 border border-slate-100 dark:border-gray-600 flex-1 overflow-y-auto min-h-0 thin-scrollbar" style={{ maxHeight: '100%' }}>
                         <pre className="text-xs text-slate-600 dark:text-gray-300 font-mono leading-relaxed whitespace-pre-wrap">{fileListSummary}</pre>
                     </div>
                 </div>
@@ -164,34 +270,42 @@ function formatModified(ts: number | undefined | null): string {
     }
 }
 
-async function buildFileListSummary(result: ScanResult): Promise<string> {
-    const settings = await loadAppSettings()
-    const fileCount = settings.promptFileCount
+async function buildFileListSummary(result: ScanResult, fileCount?: number): Promise<string> {
+    // 如果没有指定 fileCount，则从设置中读取
+    if (fileCount === undefined) {
+        const settings = await loadAppSettings()
+        fileCount = settings.promptFileCount
+    }    
+
+    // 确保 fileCount 是有效的数字
+    const count = fileCount;
 
     const nodes: { path: string; size: number; modified?: number | null }[] = []
     function collect(n: TreemapNode, depth: number) {
-        if (depth > 2) return
+        if (depth > 20) return
         if (!n.is_dir) nodes.push({ path: n.path || n.name, size: n.size, modified: n.modified })
         if (n.children?.length) {
             [...n.children].sort((a, b) => b.size - a.size).slice(0, 10).forEach((c) => collect(c, depth + 1))
         }
     }
     collect(result.root, 0)
-    const items = nodes.sort((a, b) => b.size - a.size).slice(0, fileCount)
+    const items = nodes.sort((a, b) => b.size - a.size).slice(0, count)
     const header = '| 路径 | 大小 | 最近修改时间 |\n| --- | --- | --- |\n'
     const rows = items.map(n => `| ${displayPath(n.path)} | ${formatBytes(n.size)} | ${formatModified(n.modified)} |`).join('\n')
     return `[磁盘分析结果]\n总大小: ${formatBytes(result.total_size)}，文件数: ${result.file_count}\n\n${header}${rows}`
 }
 
-interface ExpertModeProps {
+export interface ExpertModeProps {
     onOpenSettings?: () => void
     loadedSnapshot?: Snapshot | null
     onSnapshotLoaded?: () => void
     settingsSavedTrigger?: number  // 设置保存触发器
     onAddMigrateTask?: (sourcePath: string, fileSize: number, targetConfigs: CloudStorageConfig[], targetPath: string) => string
+    onFileDeleted?: (callback: ((path: string) => void) | null) => void  // 设置文件删除通知回调
+    tasks?: Task[]  // 任务队列，用于同步状态
 }
 
-export function ExpertMode({ onOpenSettings, loadedSnapshot, onSnapshotLoaded, settingsSavedTrigger, onAddMigrateTask }: ExpertModeProps) {
+export function ExpertMode({ onOpenSettings, loadedSnapshot, onSnapshotLoaded, settingsSavedTrigger, onAddMigrateTask, onFileDeleted, tasks = [] }: ExpertModeProps) {
     const [path, setPath] = useState('')
     const [status, setStatus] = useState<'idle' | 'scanning' | 'done' | 'error'>('idle')
     const [errorMsg, setErrorMsg] = useState('')
@@ -211,6 +325,8 @@ export function ExpertMode({ onOpenSettings, loadedSnapshot, onSnapshotLoaded, s
     const [actionFilter, setActionFilter] = useState<'all' | 'delete' | 'move'>('all')
     const [hoveredPieIndex, setHoveredPieIndex] = useState<number | null>(null)
     const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set())
+    // 操作类型覆盖映射：允许用户手动切换删除和迁移
+    const [actionOverrides, setActionOverrides] = useState<Map<string, 'delete' | 'move'>>(new Map())
 
     // 快照保存对话框
     const [showSaveDialog, setShowSaveDialog] = useState(false)
@@ -233,7 +349,7 @@ export function ExpertMode({ onOpenSettings, loadedSnapshot, onSnapshotLoaded, s
 
     const runScan = useCallback(async (targetPath: string) => {
         if (!targetPath) return
-        setStatus('scanning'); setErrorMsg(''); setResult(null); setProgressFiles(0); setAnalysisResult(null); setActionFilter('all');
+        setStatus('scanning'); setErrorMsg(''); setResult(null); setProgressFiles(0); setAnalysisResult(null); setActionFilter('all'); setActionOverrides(new Map());
         try {
             const res = await invoke<ScanResult>('scan_path_command', { path: targetPath, shallow_dirs: shallowDirs })
             setResult(res); setStatus('done');
@@ -298,6 +414,21 @@ export function ExpertMode({ onOpenSettings, loadedSnapshot, onSnapshotLoaded, s
         })
     }, [])
 
+    // 切换操作类型（删除 <-> 迁移）
+    const handleToggleAction = useCallback((path: string, currentAction: 'delete' | 'move') => {
+        setActionOverrides(prev => {
+            const next = new Map(prev)
+            const newAction = currentAction === 'delete' ? 'move' : 'delete'
+            next.set(path, newAction)
+            return next
+        })
+    }, [])
+
+    // 获取实际的操作类型（考虑覆盖）
+    const getActualAction = useCallback((path: string, originalAction: 'delete' | 'move'): 'delete' | 'move' => {
+        return actionOverrides.get(path) || originalAction
+    }, [actionOverrides])
+
     // 解析文件大小字符串为字节数
     const parseSizeToBytes = (sizeStr: string): number => {
         const match = sizeStr.match(/^([\d.]+)\s*(B|KB|MB|GB|TB)$/i)
@@ -323,7 +454,10 @@ export function ExpertMode({ onOpenSettings, loadedSnapshot, onSnapshotLoaded, s
         
         const allPaths = analysisResult.suggestions
             .filter(s => !deletedPaths.has(s.path))
-            .filter(s => actionFilter === 'all' || s.action === actionFilter)
+            .filter(s => {
+                const actualAction = getActualAction(s.path, s.action)
+                return actionFilter === 'all' || actualAction === actionFilter
+            })
             .map(s => s.path)
         
         // 检查是否已全选，如果是则取消全选
@@ -333,7 +467,7 @@ export function ExpertMode({ onOpenSettings, loadedSnapshot, onSnapshotLoaded, s
         } else {
             setSelectedItems(new Set(allPaths))
         }
-    }, [analysisResult, deletedPaths, actionFilter, selectedItems])
+    }, [analysisResult, deletedPaths, actionFilter, selectedItems, getActualAction])
 
     const handleMove = useCallback(async (itemPath: string, configs?: CloudStorageConfig[], targetPath?: string, fileSize?: number) => {
         // 使用传入的 configs 或全局设置的 selectedMigrationConfigs
@@ -423,8 +557,11 @@ export function ExpertMode({ onOpenSettings, loadedSnapshot, onSnapshotLoaded, s
             selectedItems.has(s.path) && !deletedPaths.has(s.path)
         )
 
-        // 检查是否有迁移操作且没有配置云存储
-        const hasMoveItems = itemsToProcess.some(item => item.action === 'move')
+        // 检查是否有迁移操作且没有配置云存储（使用实际的操作类型）
+        const hasMoveItems = itemsToProcess.some(item => {
+            const actualAction = getActualAction(item.path, item.action)
+            return actualAction === 'move'
+        })
         if (hasMoveItems && selectedMigrationConfigs.length === 0) {
             // 先获取可用的云存储配置
             const configs = await getEnabledCloudStorageConfigs()
@@ -439,10 +576,11 @@ export function ExpertMode({ onOpenSettings, loadedSnapshot, onSnapshotLoaded, s
 
         for (const item of itemsToProcess) {
             try {
-                if (item.action === 'delete') {
+                const actualAction = getActualAction(item.path, item.action)
+                if (actualAction === 'delete') {
                     await handleDelete(item.path)
                     successCount++
-                } else if (item.action === 'move') {
+                } else if (actualAction === 'move') {
                     // 执行迁移操作
                     const fileSize = parseSizeToBytes(item.size)
                     await handleMove(item.path, selectedMigrationConfigs, '/', fileSize)
@@ -463,7 +601,7 @@ export function ExpertMode({ onOpenSettings, loadedSnapshot, onSnapshotLoaded, s
         
         // 清空选中状态
         setSelectedItems(new Set())
-    }, [selectedItems, analysisResult, deletedPaths, handleDelete, handleMove, selectedMigrationConfigs])
+    }, [selectedItems, analysisResult, deletedPaths, handleDelete, handleMove, selectedMigrationConfigs, getActualAction])
 
     // 保存快照
     const handleSaveSnapshot = useCallback(() => {
@@ -528,6 +666,7 @@ export function ExpertMode({ onOpenSettings, loadedSnapshot, onSnapshotLoaded, s
         setAnalysisResult(null)
         setDeletedPaths(new Set())
         setActionFilter('all')
+        setActionOverrides(new Map())
 
         // 标准模式：加载快照后自动进行 AI 分析
         if (isAdmin === false) {
@@ -556,6 +695,31 @@ export function ExpertMode({ onOpenSettings, loadedSnapshot, onSnapshotLoaded, s
 
     // 核心：API 配置校验
     const [standardModeNoApi, setStandardModeNoApi] = useState(false)
+
+    // 根据文件路径查找对应的任务状态
+    const getTaskForPath = useCallback((filePath: string): Task | undefined => {
+        return tasks.find(task => task.sourcePath === filePath && (task.status === 'pending' || task.status === 'uploading'))
+    }, [tasks])
+
+    // 注册文件删除通知回调，当迁移任务完成并删除文件时调用
+    useEffect(() => {
+        if (onFileDeleted) {
+            const handleFileDeleted = (path: string) => {
+                setDeletedPaths(prev => new Set([...prev, path]))
+                // 从选中项中移除已删除的项
+                setSelectedItems(prev => {
+                    const next = new Set(prev)
+                    next.delete(path)
+                    return next
+                })
+            }
+            onFileDeleted(handleFileDeleted)
+            // 清理函数：组件卸载时移除回调
+            return () => {
+                onFileDeleted(null)
+            }
+        }
+    }, [onFileDeleted])
 
     useEffect(() => {
         if (isAdmin === false) {
@@ -914,8 +1078,14 @@ export function ExpertMode({ onOpenSettings, loadedSnapshot, onSnapshotLoaded, s
 
                                     {/* 饼图：删除/迁移/保留占比 */}
                                     {(() => {
-                                        const deleteSuggestions = analysisResult.suggestions.filter(s => s.action === 'delete' && !deletedPaths.has(s.path))
-                                        const moveSuggestions = analysisResult.suggestions.filter(s => s.action === 'move' && !deletedPaths.has(s.path))
+                                        const deleteSuggestions = analysisResult.suggestions.filter(s => {
+                                            const actualAction = getActualAction(s.path, s.action)
+                                            return actualAction === 'delete' && !deletedPaths.has(s.path)
+                                        })
+                                        const moveSuggestions = analysisResult.suggestions.filter(s => {
+                                            const actualAction = getActualAction(s.path, s.action)
+                                            return actualAction === 'move' && !deletedPaths.has(s.path)
+                                        })
 
                                         // 解析大小字符串为字节数
                                         const parseSize = (sizeStr: string): number => {
@@ -1192,17 +1362,31 @@ export function ExpertMode({ onOpenSettings, loadedSnapshot, onSnapshotLoaded, s
                                         <div className="grid grid-cols-1 xl:grid-cols-2 gap-3 pr-2">
                                             {analysisResult.suggestions
                                                 .filter(s => !deletedPaths.has(s.path))
-                                                .filter(s => actionFilter === 'all' || s.action === actionFilter)
-                                                .map((suggestion, idx) => (
-                                                    <SuggestionCard
-                                                        key={idx}
-                                                        suggestion={suggestion}
-                                                        onDelete={handleDelete}
-                                                        onMove={handleMove}
-                                                        selected={selectedItems.has(suggestion.path)}
-                                                        onSelectChange={handleSelectChange}
-                                                    />
-                                                ))}
+                                                .filter(s => {
+                                                    const actualAction = getActualAction(s.path, s.action)
+                                                    return actionFilter === 'all' || actualAction === actionFilter
+                                                })
+                                                .map((suggestion, idx) => {
+                                                    const actualAction = getActualAction(suggestion.path, suggestion.action)
+                                                    // 创建修改后的建议对象，使用实际的操作类型
+                                                    const modifiedSuggestion = {
+                                                        ...suggestion,
+                                                        action: actualAction
+                                                    }
+                                                    return (
+                                                        <SuggestionCard
+                                                            key={idx}
+                                                            suggestion={modifiedSuggestion}
+                                                            onDelete={handleDelete}
+                                                            onMove={handleMove}
+                                                            selected={selectedItems.has(suggestion.path)}
+                                                            onSelectChange={handleSelectChange}
+                                                            task={getTaskForPath(suggestion.path)}
+                                                            onToggleAction={() => handleToggleAction(suggestion.path, actualAction)}
+                                                            originalAction={suggestion.action}
+                                                        />
+                                                    )
+                                                })}
                                         </div>
                                     ) : (
                                         <div className="h-full flex flex-col items-center justify-center text-slate-400 dark:text-gray-500">

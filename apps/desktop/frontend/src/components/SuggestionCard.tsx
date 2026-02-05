@@ -1,10 +1,11 @@
 import { useState, useEffect } from 'react'
-import { Trash2, MoveRight, File, FolderOpen, Clock, HardDrive, Check, X, Info, Cloud, Settings } from 'lucide-react'
+import { Trash2, MoveRight, File, FolderOpen, Clock, HardDrive, X, Info, Cloud, Settings, Loader2, ArrowLeftRight } from 'lucide-react'
 import { Button, Dialog, DialogTitle, DialogContent, DialogActions, Typography, Box, Chip, Checkbox, FormControlLabel, TextField, CircularProgress, LinearProgress, Snackbar, Alert } from '@mui/material'
 import type { CleanupSuggestion } from '../services/ai-analysis'
 import { readStorageFile } from '../services/storage'
 import { hasCloudStorageConfig, getDefaultCloudStorageConfig, getEnabledCloudStorageConfigs, CLOUD_STORAGE_PROVIDERS, type CloudStorageConfig } from '../services/settings'
 import { CloudStorageSelector } from './CloudStorageSelector'
+import type { Task } from '../services/taskQueue'
 
 const SKIP_CONFIRM_KEY = 'skip-action-confirm'
 
@@ -15,6 +16,9 @@ interface Props {
   onOpenCloudSettings?: () => void
   selected?: boolean
   onSelectChange?: (path: string, selected: boolean) => void
+  task?: Task  // 关联的任务，用于显示状态
+  onToggleAction?: () => void  // 切换操作类型（删除 <-> 迁移）
+  originalAction?: 'delete' | 'move'  // 原始操作类型，用于判断是否已切换
 }
 
 // 解析文件大小字符串为字节数
@@ -36,12 +40,11 @@ function parseSizeToBytes(sizeStr: string): number {
   return Math.floor(value * (units[unit] || 1))
 }
 
-export function SuggestionCard({ suggestion, onDelete, onMove, onOpenCloudSettings, selected = false, onSelectChange }: Props) {
+export function SuggestionCard({ suggestion, onDelete, onMove, onOpenCloudSettings, selected = false, onSelectChange, task, onToggleAction, originalAction }: Props) {
   const [showConfirm, setShowConfirm] = useState(false)
   const [showDetail, setShowDetail] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
-  const [success, setSuccess] = useState(false)
   const [skipConfirm, setSkipConfirm] = useState(false)
   const [dontAskAgain, setDontAskAgain] = useState(false)
   const [hasCloudConfig, setHasCloudConfig] = useState(false)
@@ -124,7 +127,6 @@ export function SuggestionCard({ suggestion, onDelete, onMove, onOpenCloudSettin
       }
       // 成功后直接关闭对话框，不显示成功界面
       setShowConfirm(false)
-      setSuccess(true)
     } catch (err) {
       // 失败时显示 toast
       setToastMessage(String(err))
@@ -160,6 +162,15 @@ export function SuggestionCard({ suggestion, onDelete, onMove, onOpenCloudSettin
   const actionColor = suggestion.action === 'delete' ? '#ef4444' : '#3b82f6'
   const actionLabel = suggestion.action === 'delete' ? '删除' : '迁移'
   const fileName = suggestion.path.split(/[/\\]/).pop() || suggestion.path
+  
+  // 判断是否已切换操作类型
+  const isActionSwitched = originalAction !== undefined && originalAction !== suggestion.action
+  
+  // 任务状态相关
+  const isTaskPending = task?.status === 'pending'
+  const isTaskUploading = task?.status === 'uploading'
+  const isTaskInProgress = isTaskPending || isTaskUploading
+  const taskProgress = task?.progress || 0
 
   return (
     <>
@@ -211,14 +222,96 @@ export function SuggestionCard({ suggestion, onDelete, onMove, onOpenCloudSettin
                 }}
                 className="dark:!bg-gray-700 dark:!text-gray-300"
               />
+              {/* 任务状态标签 */}
+              {isTaskPending && (
+                <Chip 
+                  label="等待中"
+                  size="small"
+                  icon={<Loader2 size={12} className="animate-spin" />}
+                  sx={{ 
+                    height: '18px',
+                    fontSize: '10px',
+                    fontWeight: 600,
+                    bgcolor: '#fef3c7',
+                    color: '#f59e0b',
+                  }}
+                  className="dark:!bg-amber-900/30 dark:!text-amber-400"
+                />
+              )}
+              {isTaskUploading && (
+                <Chip 
+                  label={`上传中 ${taskProgress}%`}
+                  size="small"
+                  icon={<Loader2 size={12} className="animate-spin" />}
+                  sx={{ 
+                    height: '18px',
+                    fontSize: '10px',
+                    fontWeight: 600,
+                    bgcolor: '#dbeafe',
+                    color: '#3b82f6',
+                  }}
+                  className="dark:!bg-blue-900/30 dark:!text-blue-400"
+                />
+              )}
             </div>
             <p className="text-xs text-slate-500 dark:text-gray-400 truncate mt-0.5">
               {suggestion.message}
             </p>
+            {/* 上传进度条 */}
+            {isTaskUploading && taskProgress > 0 && (
+              <Box sx={{ mt: 0.5 }}>
+                <LinearProgress 
+                  variant="determinate" 
+                  value={taskProgress} 
+                  sx={{ 
+                    height: 4, 
+                    borderRadius: 2,
+                    bgcolor: 'action.hover',
+                    '& .MuiLinearProgress-bar': {
+                      bgcolor: '#3b82f6',
+                    }
+                  }} 
+                />
+              </Box>
+            )}
           </div>
           
           {/* 右侧按钮组 */}
           <div className="flex items-center gap-1.5 shrink-0">
+            {/* 切换操作类型按钮 */}
+            {onToggleAction && originalAction !== undefined && (
+              <Button
+                size="small"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  onToggleAction()
+                }}
+                disabled={loading || isTaskInProgress}
+                sx={{
+                  minWidth: 'auto',
+                  px: 1,
+                  py: 0.5,
+                  fontSize: '11px',
+                  textTransform: 'none',
+                  color: isActionSwitched ? 'primary.main' : 'text.secondary',
+                  borderRadius: '6px',
+                  border: isActionSwitched ? '1px solid' : 'none',
+                  borderColor: isActionSwitched ? 'primary.main' : 'transparent',
+                  bgcolor: isActionSwitched ? 'primary.main' : 'transparent',
+                  '&:hover': {
+                    bgcolor: isActionSwitched ? 'primary.dark' : 'action.hover',
+                    color: isActionSwitched ? 'white' : 'text.secondary',
+                  },
+                  '&.Mui-disabled': {
+                    bgcolor: 'transparent',
+                    color: 'text.disabled',
+                  }
+                }}
+                title={isActionSwitched ? `已切换：${suggestion.action === 'delete' ? '删除' : '迁移'}` : `切换为${suggestion.action === 'delete' ? '迁移' : '删除'}`}
+              >
+                <ArrowLeftRight size={14} />
+              </Button>
+            )}
             <Button
               size="small"
               onClick={(e) => {
@@ -243,7 +336,7 @@ export function SuggestionCard({ suggestion, onDelete, onMove, onOpenCloudSettin
             <Button
               size="small"
               onClick={handleActionClick}
-              disabled={loading}
+              disabled={loading || isTaskInProgress}
               sx={{
                 minWidth: 'auto',
                 px: 1.5,
@@ -264,7 +357,7 @@ export function SuggestionCard({ suggestion, onDelete, onMove, onOpenCloudSettin
                 }
               }}
             >
-              {loading ? '...' : actionLabel}
+              {loading ? '...' : isTaskPending ? '等待中' : isTaskUploading ? `上传中 ${taskProgress}%` : actionLabel}
             </Button>
           </div>
         </div>

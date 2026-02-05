@@ -7,11 +7,10 @@ import {
   Typography,
   IconButton,
   LinearProgress,
-  Button,
   Chip,
   Tooltip,
 } from '@mui/material'
-import { X, Cloud, CheckCircle2, XCircle, Clock, Trash2, Play, Pause, RotateCcw, FileX } from 'lucide-react'
+import { X, Cloud, Clock, Trash2, Play, Pause, RotateCcw, FileX } from 'lucide-react'
 import type { Task, TaskStatus } from '../services/taskQueue'
 import { formatFileSize, formatTime } from '../services/taskQueue'
 import { CLOUD_STORAGE_PROVIDERS } from '../services/settings'
@@ -133,10 +132,16 @@ function TaskItem({
               )}
             </>
           )}
-          {task.completedAt && task.startedAt && (
+          {task.completedAt && task.startedAt && task.completedAt >= task.startedAt && (
             <Typography variant="caption" sx={{ color: 'text.secondary', display: 'flex', alignItems: 'center', gap: 0.5 }}>
               <Clock size={12} />
               {formatTime(task.completedAt - task.startedAt)}
+            </Typography>
+          )}
+          {task.startedAt && !task.completedAt && task.status === 'uploading' && (
+            <Typography variant="caption" sx={{ color: 'text.secondary', display: 'flex', alignItems: 'center', gap: 0.5 }}>
+              <Clock size={12} />
+              {formatTime(Math.max(0, Date.now() - task.startedAt))}
             </Typography>
           )}
           {/* 显示源文件删除状态 */}

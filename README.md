@@ -15,6 +15,29 @@
   [快速开始](#快速开始) • [项目架构](#项目架构) • [开发计划](#开发计划) • [贡献指南](#贡献指南)
 </div>
 
+
+---
+
+## 📸 功能预览
+
+通过 AI 智能分析磁盘占用，快速识别可清理或迁移的文件，让磁盘管理变得简单高效。
+
+<div align="center">
+
+| AI 智能分析 | 分析结果展示 |
+|:---:|:---:|
+| <img src="figures/1.analyse_with_ai.png" width="100%" alt="AI 分析" /> | <img src="figures/2.ai_analyse_result.png" width="100%" alt="AI 分析结果" /> |
+
+| 云存储迁移 | 可视化展示 |
+|:---:|:---:|
+| <img src="figures/3.select_cloud_storage.png" width="100%" alt="选择云存储" /> | <img src="figures/4.pretty_visualise.png" width="100%" alt="可视化展示" /> |
+
+| 自定义 AI 设置 | 批量操作 |
+|:---:|:---:|
+| <img src="figures/5.custom_ai_setting.png" width="100%" alt="自定义 AI 设置" /> | <img src="figures/6.batch_operation.png" width="100%" alt="批量操作" /> |
+
+</div>
+
 ---
 
 ## ✨ 核心特性
@@ -24,26 +47,6 @@
 - 🎨 **工业级 UI**：基于 TailwindCSS 打造的现代化、沉浸式交互体验。
 - 🛡️ **安全迁移**：所有 AI 建议均需用户确认，确保数据安全。
 
-## 🏗️ 项目架构
-
-项目采用 **Rust Workspace** 管理的多包架构，结构清晰，逻辑解耦：
-
-```text
-DiskRookie/
-├── 📱 apps/
-│   ├── desktop/                # GUI App (Tauri)
-│   │   ├── src-tauri/          # Rust 桌面端后端
-│   │   └── frontend/           # React + Vite + TailwindCSS
-│   └── images/                 # 资源文件与图标处理脚本
-├── 📦 crates/
-│   ├── disk-scanner/           # 🚀 极速磁盘扫描引擎
-│   ├── domain-model/           # 核心领域实体模型
-│   ├── ai-engine/              # 🧠 AI 推理与决策层
-│   ├── executor/               # 文件操作安全执行层
-│   └── common/                 # 工具类与公共模块
-└── 📝 docs/                    # UI 设计规范与技术文档
-
-```
 
 ---
 
@@ -76,31 +79,8 @@ npm run dev
 
 ```bash
 cd apps/desktop
-npm run build
-
+npx tauri build --target x86_64-pc-windows-msvc
 ```
-
----
-
-## 📅 开发计划 (Roadmap)
-
-* [x] 核心 Rust 扫描引擎开发
-* [ ] **Phase 1**: 支持更多复杂文件类型深度识别 (Office/CAD/临时缓存)
-* [ ] **Phase 2**: 增加文件内容实时预览功能
-* [ ] **Phase 3**: AI 自定义清理规则（自然语言配置）
-* [ ] **Phase 4**: 多语言 i18n 支持与跨平台分发优化
-
----
-
-## 🤝 贡献指南
-
-我们非常欢迎 Issue 和 Pull Request！
-
-1. Fork 本仓库
-2. 创建你的特性分支 (`git checkout -b feature/AmazingFeature`)
-3. 提交你的改动 (`git commit -m 'Add some AmazingFeature'`)
-4. 推送到分支 (`git push origin feature/AmazingFeature`)
-5. 开启一个 Pull Request
 
 ---
 

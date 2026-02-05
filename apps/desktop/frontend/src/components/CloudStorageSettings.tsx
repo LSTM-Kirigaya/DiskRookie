@@ -57,13 +57,9 @@ import {
   type CloudStorageSettings as CloudStorageSettingsType,
   type CloudStorageConfig,
   type CloudStorageProvider,
-  type GoogleUserInfo,
   type GoogleDriveQuota,
-  type BaiduUserInfo,
   type BaiduNetdiskQuota,
-  type AliyunUserInfo,
   type AliyunDriveQuota,
-  type DropboxUserInfo,
   type DropboxQuota,
 } from '../services/settings'
 
@@ -629,9 +625,10 @@ function ConfigDialog({
                     >
                       {(() => {
                         // Google Drive 格式
-                        if (driveQuota.storageQuota) {
-                          const usage = parseInt(driveQuota.storageQuota.usage || '0')
-                          const limit = parseInt(driveQuota.storageQuota.limit || '0')
+                        if ('storageQuota' in driveQuota && driveQuota.storageQuota) {
+                          const quota = driveQuota as GoogleDriveQuota
+                          const usage = parseInt(quota.storageQuota.usage || '0')
+                          const limit = parseInt(quota.storageQuota.limit || '0')
                           const percentage = limit > 0 ? (usage / limit) * 100 : 0
                           
                           return (
@@ -674,10 +671,11 @@ function ConfigDialog({
                           )
                         }
                         // 百度网盘格式
-                        else if (driveQuota.total !== undefined && 'used' in driveQuota) {
-                          const used = driveQuota.used || 0
-                          const total = driveQuota.total || 0
-                          const free = driveQuota.free || (total - used)
+                        else if ('total' in driveQuota && driveQuota.total !== undefined) {
+                          const quota = driveQuota as BaiduNetdiskQuota
+                          const used = quota.used || 0
+                          const total = quota.total || 0
+                          const free = quota.free || (total - used)
                           const percentage = total > 0 ? (used / total) * 100 : 0
                           
                           return (
@@ -720,10 +718,11 @@ function ConfigDialog({
                           )
                         }
                         // 阿里云盘格式
-                        else if ('total_size' in driveQuota || 'used_size' in driveQuota) {
-                          const used = driveQuota.used_size || 0
-                          const total = driveQuota.total_size || 0
-                          const free = driveQuota.available_size || (total - used)
+                        else if ('total_size' in driveQuota) {
+                          const quota = driveQuota as AliyunDriveQuota
+                          const used = quota.used_size || 0
+                          const total = quota.total_size || 0
+                          const free = quota.available_size || (total - used)
                           const percentage = total > 0 ? (used / total) * 100 : 0
                           
                           return (
@@ -767,8 +766,9 @@ function ConfigDialog({
                         }
                         // Dropbox 格式
                         else if ('used' in driveQuota && 'allocation' in driveQuota) {
-                          const used = driveQuota.used || 0
-                          const total = driveQuota.allocation?.allocated || 0
+                          const quota = driveQuota as DropboxQuota
+                          const used = quota.used || 0
+                          const total = quota.allocation?.allocated || 0
                           const free = total > 0 ? (total - used) : 0
                           const percentage = total > 0 ? (used / total) * 100 : 0
                           

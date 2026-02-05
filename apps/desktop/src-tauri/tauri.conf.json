@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "DiskRookie 磁盘菜鸟",
+  "productName": "DiskRookie",
   "version": "0.1.0",
   "identifier": "com.DiskRookie.desktop",
   "build": {
@@ -29,7 +29,7 @@
   },
   "bundle": {
     "active": true,
-    "targets": "all",
+    "targets": ["msi"],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -42,7 +42,12 @@
     "copyright": "",
     "category": "Utility",
     "shortDescription": "AI 驱动的智能磁盘分析与整理工具",
-    "longDescription": "帮助用户快速整理磁盘上的无用文件，对冷数据提供迁移方案与建议"
+    "longDescription": "帮助用户快速整理磁盘上的无用文件，对冷数据提供迁移方案与建议",
+    "windows": {
+      "certificateThumbprint": null,
+      "digestAlgorithm": "sha256",
+      "timestampUrl": ""
+    }
   },
   "plugins": {}
 }

@@ -21,15 +21,27 @@ const BAIDU_TOKEN_URL: &str = "https://openapi.baidu.com/oauth/2.0/token";
 const BAIDU_SCOPES: &str = "netdisk"; // 百度网盘权限范围
 
 // 阿里云盘 OAuth 配置 - 从 .env 文件读取（编译时嵌入）
-const ALIYUN_CLIENT_ID: &str = dotenvy_macro::dotenv!("ALIYUN_CLIENT_ID");
-const ALIYUN_CLIENT_SECRET: &str = dotenvy_macro::dotenv!("ALIYUN_CLIENT_SECRET");
+const ALIYUN_CLIENT_ID: &str = match option_env!("ALIYUN_CLIENT_ID") {
+    Some(id) => id,
+    None => "",
+};
+const ALIYUN_CLIENT_SECRET: &str = match option_env!("ALIYUN_CLIENT_SECRET") {
+    Some(secret) => secret,
+    None => "",
+};
 const ALIYUN_AUTH_URL: &str = "https://openapi.alipan.com/oauth/authorize";
 const ALIYUN_TOKEN_URL: &str = "https://openapi.alipan.com/v2/oauth/token";
 const ALIYUN_SCOPES: &str = "user:base,file:all:read,file:all:write"; // 阿里云盘权限范围
 
 // Dropbox OAuth 配置 - 从 .env 文件读取（编译时嵌入）
-const DROPBOX_CLIENT_ID: &str = dotenvy_macro::dotenv!("DROPBOX_CLIENT_ID");
-const DROPBOX_CLIENT_SECRET: &str = dotenvy_macro::dotenv!("DROPBOX_CLIENT_SECRET");
+const DROPBOX_CLIENT_ID: &str = match option_env!("DROPBOX_CLIENT_ID") {
+    Some(id) => id,
+    None => "",
+};
+const DROPBOX_CLIENT_SECRET: &str = match option_env!("DROPBOX_CLIENT_SECRET") {
+    Some(secret) => secret,
+    None => "",
+};
 const DROPBOX_AUTH_URL: &str = "https://www.dropbox.com/oauth2/authorize";
 const DROPBOX_TOKEN_URL: &str = "https://api.dropbox.com/oauth2/token";
 const DROPBOX_SCOPES: &str = "files.content.write files.content.read account_info.read"; // Dropbox 权限范围
@@ -564,30 +576,73 @@ pub async fn complete_google_oauth(
 /// 刷新 Google OAuth access token
 #[tauri::command]
 pub async fn refresh_google_token(refresh_token: String) -> Result<OAuthTokens, String> {
-    let client = reqwest::Client::new();
-    let token_response = client
-        .post(GOOGLE_TOKEN_URL)
-        .form(&[
-            ("client_id", GOOGLE_CLIENT_ID),
-            ("client_secret", GOOGLE_CLIENT_SECRET),
-            ("refresh_token", refresh_token.as_str()),
-            ("grant_type", "refresh_token"),
-        ])
-        .send()
-        .await
-        .map_err(|e| format!("刷新 token 失败: {}", e))?;
+    // 创建带超时的 HTTP 客户端（30秒超时）
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .map_err(|e| format!("创建 HTTP 客户端失败: {}", e))?;
+    
+    // 重试机制：最多重试3次
+    let max_retries = 3;
+    let mut last_error = None;
+    
+    for attempt in 1..=max_retries {
+        let token_response = match client
+            .post(GOOGLE_TOKEN_URL)
+            .form(&[
+                ("client_id", GOOGLE_CLIENT_ID),
+                ("client_secret", GOOGLE_CLIENT_SECRET),
+                ("refresh_token", refresh_token.as_str()),
+                ("grant_type", "refresh_token"),
+            ])
+            .send()
+            .await
+        {
+            Ok(response) => response,
+            Err(e) => {
+                last_error = Some(format!("刷新 token 失败 (尝试 {}/{}): {}", attempt, max_retries, e));
+                // 如果不是最后一次尝试，等待后重试
+                if attempt < max_retries {
+                    tokio::time::sleep(std::time::Duration::from_millis(1000 * attempt as u64)).await;
+                    continue;
+                }
+                return Err(last_error.unwrap());
+            }
+        };
 
-    if !token_response.status().is_success() {
-        let error_text = token_response.text().await.unwrap_or_default();
-        return Err(format!("刷新 token 失败: {}", error_text));
+        // 先保存状态码，因为后续调用 text() 会消费 token_response
+        let status_code = token_response.status();
+        if !status_code.is_success() {
+            let error_text = token_response.text().await.unwrap_or_default();
+            let status_u16 = status_code.as_u16();
+            last_error = Some(format!("刷新 token 失败 (尝试 {}/{}): HTTP {} - {}", attempt, max_retries, status_u16, error_text));
+            // 如果是认证错误（401/403），不需要重试
+            if status_u16 == 401 || status_u16 == 403 {
+                return Err(last_error.unwrap());
+            }
+            // 如果不是最后一次尝试，等待后重试
+            if attempt < max_retries {
+                tokio::time::sleep(std::time::Duration::from_millis(1000 * attempt as u64)).await;
+                continue;
+            }
+            return Err(last_error.unwrap());
+        }
+
+        // 成功获取响应，解析 token
+        match token_response.json::<OAuthTokens>().await {
+            Ok(tokens) => return Ok(tokens),
+            Err(e) => {
+                last_error = Some(format!("解析 token 响应失败 (尝试 {}/{}): {}", attempt, max_retries, e));
+                if attempt < max_retries {
+                    tokio::time::sleep(std::time::Duration::from_millis(1000 * attempt as u64)).await;
+                    continue;
+                }
+                return Err(last_error.unwrap());
+            }
+        }
     }
-
-    let tokens: OAuthTokens = token_response
-        .json()
-        .await
-        .map_err(|e| format!("解析 token 响应失败: {}", e))?;
-
-    Ok(tokens)
+    
+    Err(last_error.unwrap_or_else(|| "刷新 token 失败：未知错误".to_string()))
 }
 
 /// 撤销 Google OAuth 授权
