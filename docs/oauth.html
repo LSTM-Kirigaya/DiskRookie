@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="utf-8">
+    <title>DiskRookie</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+            background: #2A2A2A;
+            color: #ffffff;
+            overflow: hidden;
+        }
+
+        /* 动态背景粒子效果 */
+        .bg-particles {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            overflow: hidden;
+        }
+
+        .particle {
+            position: absolute;
+            width: 2px;
+            height: 2px;
+            background: rgba(255, 210, 0, 0.3);
+            border-radius: 50%;
+            animation: float 20s infinite linear;
+        }
+
+        @keyframes float {
+            0% {
+                transform: translateY(100vh) translateX(0);
+                opacity: 0;
+            }
+
+            10% {
+                opacity: 1;
+            }
+
+            90% {
+                opacity: 1;
+            }
+
+            100% {
+                transform: translateY(-100vh) translateX(100px);
+                opacity: 0;
+            }
+        }
+
+        .container {
+            text-align: center;
+            padding: 60px 50px;
+            background: rgba(20, 20, 20, 0.8);
+            border-radius: 24px;
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            backdrop-filter: blur(20px);
+            box-shadow: 0 0 0 1px rgba(255, 210, 0, 0.1), 0 20px 60px rgba(0, 0, 0, 0.8), 0 0 100px rgba(255, 210, 0, 0.05);
+            position: relative;
+            z-index: 10;
+            max-width: 420px;
+            width: 90%;
+            animation: slideUp 0.6s ease-out;
+        }
+
+        @keyframes slideUp {
+            from {
+                opacity: 0;
+                transform: translateY(30px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        /* Logo 区域 */
+        .logo-wrapper {
+            position: relative;
+            width: 80px;
+            height: 80px;
+            margin: 0 auto 30px;
+        }
+
+        .logo-glow {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 100px;
+            height: 100px;
+            background: radial-gradient(circle, rgba(255, 210, 0, 0.3) 0%, transparent 70%);
+            border-radius: 50%;
+            animation: pulse 2s ease-in-out infinite;
+        }
+
+        @keyframes pulse {
+
+            0%,
+            100% {
+                transform: translate(-50%, -50%) scale(1);
+                opacity: 0.5;
+            }
+
+            50% {
+                transform: translate(-50%, -50%) scale(1.2);
+                opacity: 0.8;
+            }
+        }
+
+        .logo {
+            width: 80px;
+            height: 80px;
+            border-radius: 20px;
+            position: relative;
+            z-index: 2;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+        }
+
+        /* 成功图标动画 */
+        .success-ring {
+            width: 70px;
+            height: 70px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, #FFD200 0%, #FFA500 100%);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: 25px auto;
+            position: relative;
+            animation: scaleIn 0.5s ease-out 0.3s both;
+            box-shadow: 0 10px 40px rgba(255, 210, 0, 0.3);
+        }
+
+        @keyframes scaleIn {
+            0% {
+                transform: scale(0);
+            }
+
+            50% {
+                transform: scale(1.1);
+            }
+
+            100% {
+                transform: scale(1);
+            }
+        }
+
+        .success-icon {
+            font-size: 32px;
+            color: #2A2A2A;
+            font-weight: bold;
+        }
+
+        .brand-name {
+            font-size: 14px;
+            color: #FFD200;
+            letter-spacing: 3px;
+            text-transform: uppercase;
+            margin-bottom: 15px;
+            font-weight: 600;
+        }
+
+        h1 {
+            font-size: 28px;
+            font-weight: 700;
+            margin-bottom: 12px;
+            background: linear-gradient(135deg, #ffffff 0%, #a0a0a0 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .subtitle {
+            font-size: 16px;
+            color: #888;
+            margin-bottom: 35px;
+            line-height: 1.6;
+        }
+
+        /* 进度条装饰 */
+        .progress-bar {
+            width: 100%;
+            height: 3px;
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 3px;
+            overflow: hidden;
+            margin-bottom: 30px;
+        }
+
+        .progress-fill {
+            height: 100%;
+            width: 100%;
+            background: linear-gradient(90deg, #FFD200, #ffe77c);
+            animation: progress 2s ease-out;
+            border-radius: 3px;
+        }
+
+        @keyframes progress {
+            from {
+                width: 0%;
+            }
+
+            to {
+                width: 100%;
+            }
+        }
+
+        .close-btn {
+            display: inline-block;
+            padding: 14px 32px;
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 12px;
+            color: #fff;
+            font-size: 14px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            text-decoration: none;
+            font-weight: 500;
+        }
+
+        .close-btn:hover {
+            background: rgba(255, 210, 0, 0.1);
+            border-color: #FFD200;
+            color: #FFD200;
+            transform: translateY(-2px);
+            box-shadow: 0 10px 30px rgba(255, 210, 0, 0.2);
+        }
+
+        .footer {
+            margin-top: 30px;
+            font-size: 12px;
+            color: #444;
+        }
+    </style>
+</head>
+
+<body> <!-- 背景粒子 -->
+    <div class="bg-particles" id="particles"></div>
+    <div class="container"> <!-- Logo -->
+        <div class="logo-wrapper">
+            <div class="logo-glow"></div> <img src="https://youke.xn--y7xa690gmna.cn/s1/2026/02/05/698383936072d.webp"
+                alt="DiskRookie" class="logo">
+        </div> <!-- 品牌名 -->
+        <div class="brand-name">DiskRookie</div> <!-- 成功图标 -->
+        <div class="success-ring"> <span class="success-icon">✓</span> </div>
+        <h1></h1>
+        <p class="subtitle">您的 AI 磁盘清理工具已激活<br>现在可以关闭此窗口返回应用</p> <!-- 进度条 -->
+        <div class="progress-bar">
+            <div class="progress-fill"></div>
+        </div>
+        <div class="footer">AI-Powered Disk Cleaning Tool</div>
+    </div>
+    <script>const particlesContainer = document.getElementById('particles'); for (let i = 0; i < 50; i++) { const particle = document.createElement('div'); particle.className = 'particle'; particle.style.left = Math.random() * 100 + '%'; particle.style.animationDelay = Math.random() * 20 + 's'; particle.style.animationDuration = (15 + Math.random() * 10) + 's'; particlesContainer.appendChild(particle); }      </script>
+</body>
+
+</html>
