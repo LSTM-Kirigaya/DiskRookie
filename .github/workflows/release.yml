@@ -2,6 +2,8 @@ name: Build and Release
 
 on:
   push:
+    branches:
+      - main
     tags:
       - 'v*'
   workflow_dispatch:
@@ -12,7 +14,50 @@ on:
         type: string
 
 jobs:
+  # 检查是否需要构建 Release
+  check-release:
+    runs-on: ubuntu-latest
+    outputs:
+      should_release: ${{ steps.check.outputs.should_release }}
+      version: ${{ steps.check.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Check release condition
+        id: check
+        run: |
+          # 如果是手动触发，直接构建
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            echo "should_release=true" >> $GITHUB_OUTPUT
+            echo "version=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          
+          # 如果是 tag push，直接构建
+          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            echo "should_release=true" >> $GITHUB_OUTPUT
+            echo "version=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          
+          # 检查 commit message 是否包含 [release]
+          COMMIT_MSG=$(git log -1 --pretty=%B)
+          echo "Commit message: $COMMIT_MSG"
+          
+          if [[ "$COMMIT_MSG" == *"[release]"* ]]; then
+            # 从 tauri.conf.json 读取版本号
+            VERSION=$(grep '"version"' apps/desktop/src-tauri/tauri.conf.json | head -1 | sed 's/.*"version": "\(.*\)".*/\1/')
+            echo "Detected [release] tag, version: $VERSION"
+            echo "should_release=true" >> $GITHUB_OUTPUT
+            echo "version=v$VERSION" >> $GITHUB_OUTPUT
+          else
+            echo "No [release] tag found, skipping build"
+            echo "should_release=false" >> $GITHUB_OUTPUT
+          fi
+
   build-release:
+    needs: check-release
+    if: needs.check-release.outputs.should_release == 'true'
     permissions:
       contents: write
     strategy:
@@ -23,12 +68,10 @@ jobs:
             args: '--target x86_64-pc-windows-msvc'
             target: 'x86_64-pc-windows-msvc'
             artifact_name: 'DiskRookie-Windows-x86_64'
-            binary_ext: '.exe'
           - platform: 'macos-14'
             args: '--target aarch64-apple-darwin'
             target: 'aarch64-apple-darwin'
             artifact_name: 'DiskRookie-macOS-ARM64'
-            binary_ext: ''
 
     runs-on: ${{ matrix.platform }}
 
@@ -74,20 +117,11 @@ jobs:
           npm install
           tauri build ${{ matrix.args }}
 
-      - name: Get version
-        id: get_version
-        run: |
-          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
-            echo "version=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
-          else
-            echo "version=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
-          fi
-
       - name: Prepare release artifacts (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          $VERSION = "${{ steps.get_version.outputs.version }}"
+          $VERSION = "${{ needs.check-release.outputs.version }}"
           New-Item -ItemType Directory -Force -Path "release-artifacts" | Out-Null
           $bundlePath = "apps/desktop/src-tauri/target/${{ matrix.target }}/release/bundle"
           
@@ -112,7 +146,7 @@ jobs:
         if: runner.os == 'macOS'
         shell: bash
         run: |
-          VERSION="${{ steps.get_version.outputs.version }}"
+          VERSION="${{ needs.check-release.outputs.version }}"
           mkdir -p release-artifacts
           BUNDLE_PATH="apps/desktop/src-tauri/target/${{ matrix.target }}/release/bundle"
           
@@ -137,19 +171,12 @@ jobs:
   release:
     permissions:
       contents: write
-    needs: build-release
+    needs: [check-release, build-release]
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-
-      - name: Get version
-        id: get_version
-        shell: bash
-        run: |
-          echo "version=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
 
       - name: Download all artifacts
         uses: actions/download-artifact@v4
@@ -159,21 +186,21 @@ jobs:
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
-          tag_name: ${{ steps.get_version.outputs.version }}
-          name: Release ${{ steps.get_version.outputs.version }}
+          tag_name: ${{ needs.check-release.outputs.version }}
+          name: Release ${{ needs.check-release.outputs.version }}
           body: |
-            ## DiskRookie ${{ steps.get_version.outputs.version }}
+            ## DiskRookie ${{ needs.check-release.outputs.version }}
 
             ### 下载
-            - **Windows x86_64**: 下载 `.msi` 或 `.exe` 安装包
+            - **Windows x86_64**: 下载 `.msi` 安装包
             - **macOS ARM64**: 下载 `.dmg` 安装包
 
             ### 安装说明
-            - Windows: 运行 `.msi` 安装程序或直接运行 `.exe`
+            - Windows: 运行 `.msi` 安装程序
             - macOS: 打开 `.dmg` 文件，将应用拖拽到应用程序文件夹
 
             ### 变更日志
-            这是 DiskRookie 的第一个正式版本。
+            查看 commit 历史了解本次更新内容。
           files: |
             artifacts/**/*
           draft: false
