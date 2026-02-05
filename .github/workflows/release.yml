@@ -113,6 +113,15 @@ jobs:
         env:
           TAURI_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
           TAURI_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
+          # OAuth 配置（从 GitHub Secrets 读取，可选）
+          GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
+          GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+          BAIDU_CLIENT_ID: ${{ secrets.BAIDU_CLIENT_ID }}
+          BAIDU_CLIENT_SECRET: ${{ secrets.BAIDU_CLIENT_SECRET }}
+          ALIYUN_CLIENT_ID: ${{ secrets.ALIYUN_CLIENT_ID }}
+          ALIYUN_CLIENT_SECRET: ${{ secrets.ALIYUN_CLIENT_SECRET }}
+          DROPBOX_CLIENT_ID: ${{ secrets.DROPBOX_CLIENT_ID }}
+          DROPBOX_CLIENT_SECRET: ${{ secrets.DROPBOX_CLIENT_SECRET }}
         run: |
           npm install
           tauri build ${{ matrix.args }}

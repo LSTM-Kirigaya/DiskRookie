@@ -6,16 +6,28 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 use tauri::State;
 
-// Google OAuth 配置 - 从 .env 文件读取（编译时嵌入）
-const GOOGLE_CLIENT_ID: &str = dotenvy_macro::dotenv!("GOOGLE_CLIENT_ID");
-const GOOGLE_CLIENT_SECRET: &str = dotenvy_macro::dotenv!("GOOGLE_CLIENT_SECRET");
+// Google OAuth 配置 - 从环境变量读取（编译时嵌入，如果不存在则使用空字符串）
+const GOOGLE_CLIENT_ID: &str = match option_env!("GOOGLE_CLIENT_ID") {
+    Some(id) => id,
+    None => "",
+};
+const GOOGLE_CLIENT_SECRET: &str = match option_env!("GOOGLE_CLIENT_SECRET") {
+    Some(secret) => secret,
+    None => "",
+};
 const GOOGLE_AUTH_URL: &str = "https://accounts.google.com/o/oauth2/v2/auth";
 const GOOGLE_TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
 const GOOGLE_SCOPES: &str = "https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/userinfo.profile";
 
-// 百度网盘 OAuth 配置 - 从 .env 文件读取（编译时嵌入）
-const BAIDU_CLIENT_ID: &str = dotenvy_macro::dotenv!("BAIDU_CLIENT_ID");
-const BAIDU_CLIENT_SECRET: &str = dotenvy_macro::dotenv!("BAIDU_CLIENT_SECRET");
+// 百度网盘 OAuth 配置 - 从环境变量读取（编译时嵌入，如果不存在则使用空字符串）
+const BAIDU_CLIENT_ID: &str = match option_env!("BAIDU_CLIENT_ID") {
+    Some(id) => id,
+    None => "",
+};
+const BAIDU_CLIENT_SECRET: &str = match option_env!("BAIDU_CLIENT_SECRET") {
+    Some(secret) => secret,
+    None => "",
+};
 const BAIDU_AUTH_URL: &str = "https://openapi.baidu.com/oauth/2.0/authorize";
 const BAIDU_TOKEN_URL: &str = "https://openapi.baidu.com/oauth/2.0/token";
 const BAIDU_SCOPES: &str = "netdisk"; // 百度网盘权限范围
