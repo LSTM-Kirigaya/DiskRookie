@@ -29,7 +29,7 @@
 项目采用 **Rust Workspace** 管理的多包架构，结构清晰，逻辑解耦：
 
 ```text
-ai-disk-analyzer/
+DiskRookie/
 ├── 📱 apps/
 │   ├── desktop/                # GUI App (Tauri)
 │   │   ├── src-tauri/          # Rust 桌面端后端
@@ -61,8 +61,8 @@ ai-disk-analyzer/
 
 ```bash
 # 1. 克隆项目
-git clone [https://github.com/your-username/ai-disk-analyzer.git](https://github.com/your-username/ai-disk-analyzer.git)
-cd ai-disk-analyzer/apps/desktop
+git clone [https://github.com/your-username/DiskRookie.git](https://github.com/your-username/DiskRookie.git)
+cd DiskRookie/apps/desktop
 
 # 2. 安装前端依赖
 cd frontend && npm install && cd ..

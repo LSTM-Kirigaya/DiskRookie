@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect } from 'react'
+import { showNotification } from '../services/notification'
 import {
   Dialog,
   DialogTitle,
@@ -67,10 +68,10 @@ export function SnapshotDialog({ open, onClose, onLoadSnapshot }: Props) {
         onLoadSnapshot(snapshot)
         onClose()
       } else {
-        alert('加载快照失败')
+        showNotification('加载快照失败', '快照数据不存在')
       }
     } catch (error) {
-      alert(`加载快照失败: ${error}`)
+      showNotification('加载快照失败', String(error))
     } finally {
       setLoading(false)
     }

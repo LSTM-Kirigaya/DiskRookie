@@ -1,13 +1,18 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { open } from '@tauri-apps/plugin-shell'
-import { Settings, Github, Mail, ExternalLink, Sun, Moon, Monitor, FolderOpen } from 'lucide-react'
-import { ThemeProvider, createTheme, CssBaseline, IconButton, Box, Tooltip, Menu, MenuItem, ListItemIcon, ListItemText, Button } from '@mui/material'
+import { invoke } from '@tauri-apps/api/core'
+import { Settings, Github, Mail, ExternalLink, Sun, Moon, Monitor, Minus, Copy, X, ListTodo } from 'lucide-react'
+import { ThemeProvider, createTheme, CssBaseline, IconButton, Box, Tooltip, Menu, MenuItem, ListItemIcon, ListItemText, Button, Badge } from '@mui/material'
 import { ExpertMode } from './components/ExpertMode'
 import { AISettings } from './components/AISettings'
 import { SnapshotDialog } from './components/SnapshotDialog'
+import { TaskQueueDialog } from './components/TaskQueueDialog'
 import type { Snapshot } from './services/snapshot'
 import { readStorageFile, writeStorageFile } from './services/storage'
+import { type Task, createMigrateTask, formatFileSize } from './services/taskQueue'
+import type { CloudStorageConfig } from './services/settings'
+import { notifyMigrateSuccess, notifyMigrateFailed } from './services/notification'
 
 const THEME_STORAGE_FILE = 'theme.txt'
 
@@ -20,6 +25,192 @@ function App() {
   const [themePreference, setThemePreference] = useState<'light' | 'dark' | 'system'>('system')
   const [themeMenuAnchor, setThemeMenuAnchor] = useState<null | HTMLElement>(null)
   const [language, setLanguage] = useState<string>('en')
+  const [settingsSavedTrigger, setSettingsSavedTrigger] = useState(0)
+  // 任务队列状态
+  const [showTaskQueue, setShowTaskQueue] = useState(false)
+  const [tasks, setTasks] = useState<Task[]>([])
+  const [isPaused, setIsPaused] = useState(false)
+  const processingRef = useRef(false)
+  const abortControllersRef = useRef<Map<string, AbortController>>(new Map())
+
+  // 活跃任务数量
+  const activeTaskCount = tasks.filter(t => t.status === 'pending' || t.status === 'uploading').length
+
+  // 添加任务到队列
+  const addTask = useCallback((task: Task) => {
+    setTasks(prev => [...prev, task])
+  }, [])
+
+  // 添加迁移任务（供子组件调用）
+  const addMigrateTask = useCallback((
+    sourcePath: string,
+    fileSize: number,
+    targetConfigs: CloudStorageConfig[],
+    targetPath: string,
+    deleteSource: boolean = true  // 默认上传成功后删除源文件
+  ) => {
+    const task = createMigrateTask(sourcePath, fileSize, targetConfigs, targetPath, deleteSource)
+    addTask(task)
+    return task.id
+  }, [addTask])
+
+  // 更新任务状态
+  const updateTask = useCallback((taskId: string, updates: Partial<Task>) => {
+    setTasks(prev => prev.map(t => 
+      t.id === taskId ? { ...t, ...updates } : t
+    ))
+  }, [])
+
+  // 取消任务
+  const cancelTask = useCallback((taskId: string) => {
+    const controller = abortControllersRef.current.get(taskId)
+    if (controller) {
+      controller.abort()
+      abortControllersRef.current.delete(taskId)
+    }
+    updateTask(taskId, { status: 'cancelled' })
+  }, [updateTask])
+
+  // 重试任务
+  const retryTask = useCallback((taskId: string) => {
+    updateTask(taskId, { status: 'pending', progress: 0, error: undefined })
+  }, [updateTask])
+
+  // 清除已完成的任务
+  const clearCompleted = useCallback(() => {
+    setTasks(prev => prev.filter(t => t.status !== 'completed' && t.status !== 'cancelled'))
+  }, [])
+
+  // 暂停所有任务
+  const pauseAll = useCallback(() => {
+    setIsPaused(true)
+  }, [])
+
+  // 继续所有任务
+  const resumeAll = useCallback(() => {
+    setIsPaused(false)
+  }, [])
+
+  // 处理队列中的任务
+  useEffect(() => {
+    const processNextTask = async () => {
+      if (processingRef.current || isPaused) return
+
+      const pendingTask = tasks.find(t => t.status === 'pending')
+      if (!pendingTask) return
+
+      processingRef.current = true
+      const taskId = pendingTask.id
+      const abortController = new AbortController()
+      abortControllersRef.current.set(taskId, abortController)
+
+      // 开始上传
+      updateTask(taskId, { status: 'uploading', startedAt: Date.now() })
+
+      try {
+        const config = pendingTask.targetConfigs[0]
+        if (!config || !config.accessToken) {
+          throw new Error('未找到有效的云存储配置')
+        }
+
+        // 动态导入 refreshGoogleToken
+        const { refreshGoogleToken } = await import('./services/settings')
+
+        let accessToken = config.accessToken
+
+        // 检查 token 是否即将过期
+        if (config.tokenExpiry) {
+          const expiryBuffer = 5 * 60 * 1000
+          if (config.tokenExpiry - Date.now() < expiryBuffer) {
+            if (!config.refreshToken) {
+              throw new Error(`${config.name} 登录已过期，请重新登录`)
+            }
+            const newTokenData = await refreshGoogleToken(config.refreshToken)
+            accessToken = newTokenData.access_token
+          }
+        }
+
+        // 模拟进度（因为实际 API 可能不支持进度回调）
+        let progress = 0
+        let isCompleted = false  // 标志：防止上传完成后 interval 继续更新进度
+        const progressInterval = setInterval(() => {
+          if (abortController.signal.aborted || isCompleted) {
+            clearInterval(progressInterval)
+            return
+          }
+          progress = Math.min(progress + Math.random() * 15, 90)
+          updateTask(taskId, { progress: Math.floor(progress) })
+        }, 500)
+
+        // 准备上传配置
+        const uploadConfigs = [{
+          provider: config.provider,
+          name: config.name,
+          access_token: accessToken,
+          target_path: pendingTask.targetPath,
+        }]
+
+        // 调用 Tauri 后端上传（传递是否删除源文件的参数）
+        interface UploadResult {
+          success: boolean
+          provider: string
+          file_id: string | null
+          message: string
+          source_deleted: boolean
+        }
+
+        const results = await invoke<UploadResult[]>('upload_to_cloud', {
+          filePath: pendingTask.sourcePath,
+          configs: uploadConfigs,
+          deleteSource: pendingTask.deleteSource ?? true,  // 默认删除源文件
+        })
+
+        // 标记为已完成，防止 interval 继续更新
+        isCompleted = true
+        clearInterval(progressInterval)
+        
+        if (!abortController.signal.aborted) {
+          // 检查是否所有上传都成功
+          const allSuccess = results.every(r => r.success)
+          const anySourceDeleted = results.some(r => r.source_deleted)
+
+          if (allSuccess) {
+            // 直接更新状态和进度到100%，确保状态同步
+            updateTask(taskId, { 
+              status: 'completed', 
+              progress: 100, 
+              completedAt: Date.now(),
+              sourceDeleted: anySourceDeleted,
+            })
+            // 发送系统通知
+            notifyMigrateSuccess(
+              pendingTask.fileName,
+              config.name || config.provider,
+              anySourceDeleted
+            )
+          } else {
+            const failedResults = results.filter(r => !r.success)
+            throw new Error(failedResults.map(r => r.message).join('; '))
+          }
+        }
+      } catch (error) {
+        if (!abortController.signal.aborted) {
+          updateTask(taskId, { 
+            status: 'failed', 
+            error: String(error),
+            completedAt: Date.now()
+          })
+          // 发送失败通知
+          notifyMigrateFailed(pendingTask.fileName, String(error))
+        }
+      } finally {
+        abortControllersRef.current.delete(taskId)
+        processingRef.current = false
+      }
+    }
+
+    processNextTask()
+  }, [tasks, isPaused, updateTask])
 
   // 检测系统主题
   const systemTheme = useMemo(() => {
@@ -112,7 +303,7 @@ function App() {
   return (
     <ThemeProvider theme={theme}>
       <CssBaseline />
-      <div className={`min-h-screen flex flex-col overflow-hidden ${themeMode === 'dark' ? 'bg-gray-900 text-gray-100' : 'bg-white text-text-main'}`} style={{ height: '100vh' }}>
+      <div className={`min-h-screen flex flex-col overflow-hidden ${themeMode === 'dark' ? 'bg-gray-900 text-gray-100' : 'bg-white text-text-main'}`} style={{ height: '100%', boxSizing: 'border-box' }}>
       {/* 菜单栏固定顶部，向下滚动时始终可见 */}
       <header className={`sticky top-0 z-50 shrink-0 h-10 flex items-center border-b select-none ${themeMode === 'dark' ? 'border-gray-700 bg-gray-900' : 'border-border bg-white'} ${platform === 'macos' ? 'pl-16' : ''}`}>
         {/* macOS 窗口控制按钮（左上角） */}
@@ -201,14 +392,22 @@ function App() {
           </Box>
         )}
 
-        {/* 左侧：应用名称 */}
+        {/* 左侧：应用图标和名称 */}
         <div
           data-tauri-drag-region
           onMouseDown={handleTitleBarMouseDown}
-          className="flex items-center px-4 h-full cursor-default"
+          className="flex items-center px-4 h-full cursor-default gap-2"
           style={{ flex: '0 0 auto' }}
         >
-          <span className={`text-sm font-semibold ${themeMode === 'dark' ? 'text-gray-100' : 'text-secondary'}`}>
+          {platform !== 'macos' && (
+            <img 
+              src="/app-icon.png" 
+              alt="App Icon" 
+              className="w-6 h-6 rounded-md mr-5"
+              style={{ imageRendering: 'crisp-edges' }}
+            />
+          )}
+          <span className={`text-sm font-semibold ${platform === 'macos' ? '' : 'mr-16'} ${themeMode === 'dark' ? 'text-gray-100' : 'text-secondary'}`}>
             {language === 'zh' ? '磁盘菜鸟' : 'DiskRookie'}
           </span>
         </div>
@@ -273,7 +472,7 @@ function App() {
           <Tooltip title="GitHub 仓库" arrow>
             <IconButton
               size="small"
-              onClick={() => open('https://github.com/LSTM-Kirigaya/ai-disk-analyzer')}
+              onClick={() => open('https://github.com/LSTM-Kirigaya/DiskRookie')}
               sx={{
                 width: '24px',
                 height: '24px',
@@ -325,6 +524,40 @@ function App() {
         
         {/* 功能按钮 */}
         <div className="flex items-center h-full px-2 gap-1">
+          {/* 工作队列按钮 */}
+          <Tooltip title="处理队列" arrow>
+            <IconButton
+              size="small"
+              onClick={() => setShowTaskQueue(true)}
+              sx={{
+                width: '28px',
+                height: '28px',
+                color: 'text.secondary',
+                '&:hover': {
+                  bgcolor: 'action.hover',
+                },
+              }}
+            >
+              <Badge 
+                badgeContent={activeTaskCount} 
+                color="primary"
+                max={99}
+                sx={{
+                  '& .MuiBadge-badge': {
+                    fontSize: '10px',
+                    minWidth: '16px',
+                    height: '16px',
+                    padding: '0 4px',
+                    bgcolor: 'primary.main',
+                    color: '#1A1A1A',
+                    fontWeight: 700,
+                  }
+                }}
+              >
+                <ListTodo className="w-4 h-4" />
+              </Badge>
+            </IconButton>
+          </Tooltip>
           <Tooltip title="主题设置" arrow>
             <IconButton
               size="small"
@@ -416,7 +649,7 @@ function App() {
 
         {/* Windows/Linux 窗口控制按钮（右上角） */}
         {platform !== 'macos' && (
-          <div className={`flex items-center border-l gap-1 pr-1 ${themeMode === 'dark' ? 'border-gray-700' : 'border-border'}`}>
+          <div className={`flex items-center border-l ${themeMode === 'dark' ? 'border-gray-700' : 'border-border'}`}>
             <IconButton
               size="small"
               onClick={() => win.minimize()}
@@ -424,14 +657,14 @@ function App() {
               sx={{
                 width: '40px',
                 height: '40px',
+                borderRadius: 0,
                 color: 'text.secondary',
-                fontSize: '14px',
                 '&:hover': {
                   bgcolor: 'action.hover',
                 },
               }}
             >
-              −
+              <Minus className="w-4 h-4" />
             </IconButton>
             <IconButton
               size="small"
@@ -440,14 +673,14 @@ function App() {
               sx={{
                 width: '40px',
                 height: '40px',
+                borderRadius: 0,
                 color: 'text.secondary',
-                fontSize: '14px',
                 '&:hover': {
                   bgcolor: 'action.hover',
                 },
               }}
             >
-              □
+              <Copy className="w-4 h-4" />
             </IconButton>
             <IconButton
               size="small"
@@ -456,15 +689,15 @@ function App() {
               sx={{
                 width: '40px',
                 height: '40px',
+                borderRadius: 0,
                 color: 'text.secondary',
-                fontSize: '14px',
                 '&:hover': {
                   bgcolor: 'error.main',
                   color: 'white',
                 },
               }}
             >
-              ✕
+              <X className="w-4 h-4" />
             </IconButton>
           </div>
         )}
@@ -477,18 +710,38 @@ function App() {
             onOpenSettings={() => setShowSettings(true)} 
             loadedSnapshot={loadedSnapshot}
             onSnapshotLoaded={() => setLoadedSnapshot(null)}
+            settingsSavedTrigger={settingsSavedTrigger}
+            onAddMigrateTask={addMigrateTask}
           />
         </main>
       </div>
 
       {/* 设置弹窗 */}
-      {showSettings && <AISettings onClose={() => setShowSettings(false)} />}
+      {showSettings && (
+        <AISettings 
+          onClose={() => setShowSettings(false)} 
+          onSaved={() => setSettingsSavedTrigger(prev => prev + 1)}
+        />
+      )}
       
       {/* 快照管理对话框 */}
       <SnapshotDialog 
         open={showSnapshots} 
         onClose={() => setShowSnapshots(false)}
         onLoadSnapshot={(snapshot) => setLoadedSnapshot(snapshot)}
+      />
+
+      {/* 任务队列对话框 */}
+      <TaskQueueDialog
+        open={showTaskQueue}
+        onClose={() => setShowTaskQueue(false)}
+        tasks={tasks}
+        onCancelTask={cancelTask}
+        onRetryTask={retryTask}
+        onClearCompleted={clearCompleted}
+        onPauseAll={pauseAll}
+        onResumeAll={resumeAll}
+        isPaused={isPaused}
       />
       </div>
     </ThemeProvider>

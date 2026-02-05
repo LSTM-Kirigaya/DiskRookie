@@ -2,7 +2,8 @@ import { useState, useCallback, useEffect, useRef } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { open } from '@tauri-apps/plugin-dialog'
-import { Folder, Cpu, MessageSquare, Copy, CheckCircle2, AlertCircle, Settings, Clock, FileStack, HardDrive, Sparkles, Save, Cloud } from 'lucide-react'
+import { showNotification } from '../services/notification'
+import { Folder, Cpu, MessageSquare, Copy, CheckCircle2, AlertCircle, Settings, Clock, FileStack, HardDrive, Sparkles, Save, Cloud, Play } from 'lucide-react'
 import { Button, TextField, Typography, Fade, Tooltip, Dialog, DialogTitle, DialogContent, DialogActions } from '@mui/material'
 import { PieChart, Pie, Cell, ResponsiveContainer } from 'recharts'
 import { Treemap, type TreemapNode } from './Treemap'
@@ -12,7 +13,7 @@ import { analyzeWithAI, deleteItem, type AnalysisResult } from '../services/ai-a
 import { SuggestionCard } from './SuggestionCard'
 import { saveSnapshot, type Snapshot } from '../services/snapshot'
 import { readStorageFile, writeStorageFile } from '../services/storage'
-import { loadAppSettings, getEnabledCloudStorageConfigs, type CloudStorageConfig } from '../services/settings'
+import { loadAppSettings, getEnabledCloudStorageConfigs, CLOUD_STORAGE_PROVIDERS, type CloudStorageConfig } from '../services/settings'
 import { CloudStorageSelector } from './CloudStorageSelector'
 
 interface ScanResult {
@@ -186,9 +187,11 @@ interface ExpertModeProps {
     onOpenSettings?: () => void
     loadedSnapshot?: Snapshot | null
     onSnapshotLoaded?: () => void
+    settingsSavedTrigger?: number  // 设置保存触发器
+    onAddMigrateTask?: (sourcePath: string, fileSize: number, targetConfigs: CloudStorageConfig[], targetPath: string) => string
 }
 
-export function ExpertMode({ onOpenSettings, loadedSnapshot, onSnapshotLoaded }: ExpertModeProps) {
+export function ExpertMode({ onOpenSettings, loadedSnapshot, onSnapshotLoaded, settingsSavedTrigger, onAddMigrateTask }: ExpertModeProps) {
     const [path, setPath] = useState('')
     const [status, setStatus] = useState<'idle' | 'scanning' | 'done' | 'error'>('idle')
     const [errorMsg, setErrorMsg] = useState('')
@@ -207,6 +210,7 @@ export function ExpertMode({ onOpenSettings, loadedSnapshot, onSnapshotLoaded }:
     const [deletedPaths, setDeletedPaths] = useState<Set<string>>(new Set())
     const [actionFilter, setActionFilter] = useState<'all' | 'delete' | 'move'>('all')
     const [hoveredPieIndex, setHoveredPieIndex] = useState<number | null>(null)
+    const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set())
 
     // 快照保存对话框
     const [showSaveDialog, setShowSaveDialog] = useState(false)
@@ -242,8 +246,16 @@ export function ExpertMode({ onOpenSettings, loadedSnapshot, onSnapshotLoaded }:
                     const summary = await buildFileListSummary(res)
                     const aiResult = await analyzeWithAI(summary, (msg) => setAiProgress(msg))
                     setAnalysisResult(aiResult)
+                    // AI分析完成后显示系统通知（Windows右下角/macOS右上角）
+                    const suggestionCount = aiResult.suggestions.length
+                    const notificationBody = suggestionCount > 0 
+                        ? `找到 ${suggestionCount} 条清理建议，请查看下方建议列表。`
+                        : aiResult.summary || '当前磁盘空间使用良好，无需清理。'
+                    await showNotification('AI 分析完成', notificationBody)
                 } catch (aiError) {
                     setErrorMsg(`AI 分析失败: ${aiError}`)
+                    // 分析失败时也显示系统通知
+                    await showNotification('AI 分析失败', String(aiError))
                 } finally {
                     setAiAnalyzing(false)
                     setAiProgress('')
@@ -265,19 +277,83 @@ export function ExpertMode({ onOpenSettings, loadedSnapshot, onSnapshotLoaded }:
     const handleDelete = useCallback(async (itemPath: string) => {
         await deleteItem(itemPath)
         setDeletedPaths(prev => new Set([...prev, itemPath]))
+        // 从选中项中移除已删除的项
+        setSelectedItems(prev => {
+            const next = new Set(prev)
+            next.delete(itemPath)
+            return next
+        })
     }, [])
 
-    const handleMove = useCallback(async (itemPath: string, configs?: CloudStorageConfig[], targetPath?: string) => {
+    // 处理选中状态变化
+    const handleSelectChange = useCallback((path: string, selected: boolean) => {
+        setSelectedItems(prev => {
+            const next = new Set(prev)
+            if (selected) {
+                next.add(path)
+            } else {
+                next.delete(path)
+            }
+            return next
+        })
+    }, [])
+
+    // 解析文件大小字符串为字节数
+    const parseSizeToBytes = (sizeStr: string): number => {
+        const match = sizeStr.match(/^([\d.]+)\s*(B|KB|MB|GB|TB)$/i)
+        if (!match) return 0
+        
+        const value = parseFloat(match[1])
+        const unit = match[2].toUpperCase()
+        
+        const units: Record<string, number> = {
+            'B': 1,
+            'KB': 1024,
+            'MB': 1024 * 1024,
+            'GB': 1024 * 1024 * 1024,
+            'TB': 1024 * 1024 * 1024 * 1024,
+        }
+        
+        return Math.floor(value * (units[unit] || 1))
+    }
+
+    // 一键全选/取消全选
+    const handleSelectAll = useCallback(() => {
+        if (!analysisResult) return
+        
+        const allPaths = analysisResult.suggestions
+            .filter(s => !deletedPaths.has(s.path))
+            .filter(s => actionFilter === 'all' || s.action === actionFilter)
+            .map(s => s.path)
+        
+        // 检查是否已全选，如果是则取消全选
+        const allSelected = allPaths.every(p => selectedItems.has(p))
+        if (allSelected) {
+            setSelectedItems(new Set())
+        } else {
+            setSelectedItems(new Set(allPaths))
+        }
+    }, [analysisResult, deletedPaths, actionFilter, selectedItems])
+
+    const handleMove = useCallback(async (itemPath: string, configs?: CloudStorageConfig[], targetPath?: string, fileSize?: number) => {
         // 使用传入的 configs 或全局设置的 selectedMigrationConfigs
         const targetConfigs = configs || selectedMigrationConfigs
         const cloudPath = targetPath || '/'
 
-        // 迁移到云存储
-        console.log('迁移文件到云存储:', { itemPath, targetConfigs, cloudPath })
-
         if (!targetConfigs || targetConfigs.length === 0) {
             throw new Error('未选择云存储目标')
         }
+
+        // 如果有任务队列回调，则添加到队列
+        if (onAddMigrateTask) {
+            // 获取文件大小（如果没有传入）
+            const size = fileSize || 0
+            onAddMigrateTask(itemPath, size, targetConfigs, cloudPath)
+            return
+        }
+
+        // 否则直接执行（兼容旧逻辑）
+        console.log('迁移文件到云存储:', { itemPath, targetConfigs, cloudPath })
 
         // 动态导入 refreshGoogleToken
         const { refreshGoogleToken } = await import('../services/settings')
@@ -337,7 +413,53 @@ export function ExpertMode({ onOpenSettings, loadedSnapshot, onSnapshotLoaded }:
         }
 
         console.log('上传成功:', results)
-    }, [selectedMigrationConfigs])
+    }, [selectedMigrationConfigs, onAddMigrateTask])
+
+    // 一键执行选中的操作
+    const handleBatchExecute = useCallback(async () => {
+        if (selectedItems.size === 0 || !analysisResult) return
+        
+        const itemsToProcess = analysisResult.suggestions.filter(s => 
+            selectedItems.has(s.path) && !deletedPaths.has(s.path)
+        )
+
+        // 检查是否有迁移操作且没有配置云存储
+        const hasMoveItems = itemsToProcess.some(item => item.action === 'move')
+        if (hasMoveItems && selectedMigrationConfigs.length === 0) {
+            showNotification('未配置云存储', '请先点击"设置迁移目标"配置云存储服务')
+            return
+        }
+        
+        let successCount = 0
+        let failCount = 0
+
+        for (const item of itemsToProcess) {
+            try {
+                if (item.action === 'delete') {
+                    await handleDelete(item.path)
+                    successCount++
+                } else if (item.action === 'move') {
+                    // 执行迁移操作
+                    const fileSize = parseSizeToBytes(item.size)
+                    await handleMove(item.path, selectedMigrationConfigs, '/', fileSize)
+                    successCount++
+                }
+            } catch (err) {
+                console.error(`处理 ${item.path} 失败:`, err)
+                failCount++
+            }
+        }
+
+        // 显示完成通知
+        if (failCount === 0) {
+            showNotification('批量执行完成', `成功处理 ${successCount} 个项目`)
+        } else {
+            showNotification('批量执行完成', `成功 ${successCount} 个，失败 ${failCount} 个`)
+        }
+        
+        // 清空选中状态
+        setSelectedItems(new Set())
+    }, [selectedItems, analysisResult, deletedPaths, handleDelete, handleMove, selectedMigrationConfigs])
 
     // 保存快照
     const handleSaveSnapshot = useCallback(() => {
@@ -361,9 +483,9 @@ export function ExpertMode({ onOpenSettings, loadedSnapshot, onSnapshotLoaded }:
             })
             setShowSaveDialog(false)
             setSnapshotName('')
-            alert('快照保存成功！')
+            showNotification('快照保存成功', `已保存快照：${snapshotName.trim()}`)
         } catch (e) {
-            alert(`保存失败：${e}`)
+            showNotification('保存失败', String(e))
         }
     }, [result, path, snapshotName])
 
@@ -372,7 +494,7 @@ export function ExpertMode({ onOpenSettings, loadedSnapshot, onSnapshotLoaded }:
         const configs = await getEnabledCloudStorageConfigs()
 
         if (configs.length === 0) {
-            alert('请先配置至少一个云存储服务')
+            showNotification('未配置云存储', '请先在设置中配置至少一个云存储服务')
             return
         }
 
@@ -385,11 +507,13 @@ export function ExpertMode({ onOpenSettings, loadedSnapshot, onSnapshotLoaded }:
         setSelectedMigrationConfigs(configs)
         setShowCloudSelector(false)
 
-        // 更新显示的目标名称
+        // 更新显示的目标名称（只显示服务商名称）
         if (configs.length === 0) {
             setMigrationTargetNames('')
         } else if (configs.length === 1) {
-            setMigrationTargetNames(configs[0].name)
+            // 获取服务商显示名称
+            const providerInfo = CLOUD_STORAGE_PROVIDERS.find(p => p.id === configs[0].provider)
+            setMigrationTargetNames(providerInfo?.name || configs[0].provider)
         } else {
             setMigrationTargetNames(`${configs.length} 个云存储`)
         }
@@ -440,7 +564,7 @@ export function ExpertMode({ onOpenSettings, loadedSnapshot, onSnapshotLoaded }:
                 setStandardModeNoApi(!settings.apiKey?.trim())
             })
         }
-    }, [isAdmin])
+    }, [isAdmin, settingsSavedTrigger])
 
     useEffect(() => {
         if (isAdmin === false && onOpenSettings && !openedSettingsForStandardRef.current && standardModeNoApi) {
@@ -578,17 +702,77 @@ export function ExpertMode({ onOpenSettings, loadedSnapshot, onSnapshotLoaded }:
                         ]
                         const tooltipTitle = stats.map(({ label, val }) => `${label}: ${val}`).join(' · ')
                         return (
-                            <Tooltip title={tooltipTitle} arrow placement="bottom">
-                                <div className="flex items-center gap-3 px-3 py-2 rounded-xl border border-slate-200/80 dark:border-gray-600 bg-slate-50/50 dark:bg-gray-700/30 cursor-default">
-                                    {stats.map(({ label, val, Icon }, idx) => (
-                                        <span key={label} className="flex items-center gap-2">
-                                            {idx > 0 && <div className="w-px h-5 bg-slate-200 dark:bg-gray-600 shrink-0" aria-hidden />}
-                                            <Icon size={14} className="text-slate-400 dark:text-gray-400 shrink-0" />
-                                            <span className="text-[11px] dark:text-gray-300 font-semibold text-secondary tabular-nums">{val}</span>
-                                        </span>
-                                    ))}
-                                </div>
-                            </Tooltip>
+                            <div className="flex items-center gap-2">
+                                {/* 一键全选/取消全选按钮 */}
+                                {analysisResult && (() => {
+                                    const visibleItems = analysisResult.suggestions
+                                        .filter(s => !deletedPaths.has(s.path))
+                                        .filter(s => actionFilter === 'all' || s.action === actionFilter)
+                                    if (visibleItems.length === 0) return null
+                                    const allSelected = visibleItems.every(s => selectedItems.has(s.path))
+                                    return (
+                                        <Button
+                                            onClick={handleSelectAll}
+                                            variant="outlined"
+                                            size="small"
+                                            sx={{
+                                                borderRadius: '10px',
+                                                px: 1.5,
+                                                py: 0.8,
+                                                color: 'primary.main',
+                                                borderColor: 'primary.main',
+                                                fontWeight: 700,
+                                                fontSize: '11px',
+                                                textTransform: 'none',
+                                                '&:hover': {
+                                                    bgcolor: 'primary.main',
+                                                    color: '#1A1A1A',
+                                                    borderColor: 'primary.main',
+                                                }
+                                            }}
+                                        >
+                                            {allSelected ? '取消全选' : '全选'}
+                                        </Button>
+                                    )
+                                })()}
+                                {/* 一键执行按钮 - 当有选中项时显示 */}
+                                {selectedItems.size > 0 && (
+                                    <Button
+                                        onClick={handleBatchExecute}
+                                        variant="contained"
+                                        size="small"
+                                        startIcon={<Play size={14} />}
+                                        sx={{
+                                            borderRadius: '10px',
+                                            px: 2,
+                                            py: 0.8,
+                                            bgcolor: 'primary.main',
+                                            color: '#1A1A1A',
+                                            fontWeight: 700,
+                                            fontSize: '11px',
+                                            textTransform: 'none',
+                                            boxShadow: 'none',
+                                            '&:hover': {
+                                                bgcolor: 'primary.dark',
+                                                boxShadow: 'none',
+                                            }
+                                        }}
+                                    >
+                                        执行 ({selectedItems.size})
+                                    </Button>
+                                )}
+                                <Tooltip title={tooltipTitle} arrow placement="bottom">
+                                    <div className="flex items-center gap-3 px-3 py-2 rounded-xl border border-slate-200/80 dark:border-gray-600 bg-slate-50/50 dark:bg-gray-700/30 cursor-default">
+                                        {stats.map(({ label, val, Icon }, idx) => (
+                                            <span key={label} className="flex items-center gap-2">
+                                                {idx > 0 && <div className="w-px h-5 bg-slate-200 dark:bg-gray-600 shrink-0" aria-hidden />}
+                                                <Icon size={14} className="text-slate-400 dark:text-gray-400 shrink-0" />
+                                                <span className="text-[11px] dark:text-gray-300 font-semibold text-secondary tabular-nums">{val}</span>
+                                            </span>
+                                        ))}
+                                    </div>
+                                </Tooltip>
+                            </div>
                         )
                     })()}
                 </div>
@@ -1016,6 +1200,8 @@ export function ExpertMode({ onOpenSettings, loadedSnapshot, onSnapshotLoaded }:
                                                         suggestion={suggestion}
                                                         onDelete={handleDelete}
                                                         onMove={handleMove}
+                                                        selected={selectedItems.has(suggestion.path)}
+                                                        onSelectChange={handleSelectChange}
                                                     />
                                                 ))}
                                         </div>

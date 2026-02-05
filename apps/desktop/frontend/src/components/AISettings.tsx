@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { X, Eye, EyeOff, Check, AlertCircle, ChevronDown, ChevronUp, Brain, Cloud } from 'lucide-react'
+import { showNotification } from '../services/notification'
 import {
   TextField,
   Select,
@@ -35,6 +36,7 @@ import { CloudStorageSettings } from './CloudStorageSettings'
 interface Props {
   onClose: () => void
   initialTab?: number  // 允许外部指定初始 Tab
+  onSaved?: () => void  // 保存成功后的回调
 }
 
 interface TabPanelProps {
@@ -64,7 +66,7 @@ function TabPanel(props: TabPanelProps) {
   )
 }
 
-export function AISettings({ onClose, initialTab = 0 }: Props) {
+export function AISettings({ onClose, initialTab = 0, onSaved }: Props) {
   const [settings, setSettings] = useState<AISettingsType>(DEFAULT_SETTINGS)
   const [appSettings, setAppSettings] = useState<AppSettings>({ promptFileCount: 100 })
   const [showApiKey, setShowApiKey] = useState(false)
@@ -132,13 +134,15 @@ export function AISettings({ onClose, initialTab = 0 }: Props) {
       await saveSettings(settings)
       await saveAppSettings(appSettings)
       setSaved(true)
+      // 通知父组件保存成功
+      onSaved?.()
       // 保存成功后短暂显示「已保存」再自动关闭对话框
       setTimeout(() => {
         setSaved(false)
         onClose()
       }, 400)
     } catch (error) {
-      alert(`保存设置失败: ${error}`)
+      showNotification('保存设置失败', String(error))
     }
   }
 
@@ -164,7 +168,7 @@ export function AISettings({ onClose, initialTab = 0 }: Props) {
   const isCustomModel = !MODEL_PRESETS.some(p => p.value === settings.model && p.value !== 'custom')
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center rounded-[12px] z-50">
       <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl w-full max-w-lg mx-4 max-h-[90vh] overflow-hidden flex flex-col border border-transparent dark:border-gray-600">
         {/* 标题栏 */}
         <div className="flex items-center justify-between p-4 border-b border-border dark:border-gray-600">

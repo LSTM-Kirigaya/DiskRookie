@@ -11,8 +11,12 @@
 
 html {
   background: transparent;
+  box-sizing: border-box;
 }
 
+*, *::before, *::after {
+  box-sizing: inherit;
+}
 
 body {
   @apply text-text-main antialiased font-sans;
@@ -20,15 +24,19 @@ body {
   min-height: 100vh;
   overflow: hidden;
   background: transparent !important;
+  box-sizing: border-box;
 }
 
 #root {
   border-radius: 12px;
   overflow: hidden;
   height: 100vh;
+  box-sizing: border-box;
   background: white;
   border: 1px solid gray;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  display: flex;
+  flex-direction: column;
 }
 
 html.dark #root {

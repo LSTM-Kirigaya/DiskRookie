@@ -2,7 +2,7 @@
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "DiskRookie 磁盘菜鸟",
   "version": "0.1.0",
-  "identifier": "com.ai-disk-analyzer.desktop",
+  "identifier": "com.DiskRookie.desktop",
   "build": {
     "beforeDevCommand": "npm run frontend:dev",
     "devUrl": "http://localhost:5173",

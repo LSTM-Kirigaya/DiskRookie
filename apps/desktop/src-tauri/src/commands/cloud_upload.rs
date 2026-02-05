@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::fs;
 use std::path::Path;
 use reqwest;
 
@@ -16,6 +17,7 @@ pub struct UploadResult {
     pub provider: String,
     pub file_id: Option<String>,
     pub message: String,
+    pub source_deleted: bool,
 }
 
 /// 上传文件到云存储
@@ -23,8 +25,10 @@ pub struct UploadResult {
 pub async fn upload_to_cloud(
     file_path: String,
     configs: Vec<UploadConfig>,
+    delete_source: Option<bool>,
 ) -> Result<Vec<UploadResult>, String> {
     let mut results = Vec::new();
+    let mut all_success = true;
     
     for config in configs {
         let result = match config.provider.as_str() {
@@ -32,20 +36,54 @@ pub async fn upload_to_cloud(
             _ => Err(format!("不支持的云存储提供商: {}", config.provider)),
         };
         
-        results.push(match result {
+        let upload_result = match result {
             Ok(file_id) => UploadResult {
                 success: true,
                 provider: config.provider.clone(),
                 file_id: Some(file_id),
                 message: format!("成功上传到 {}", config.name),
+                source_deleted: false,
             },
-            Err(e) => UploadResult {
-                success: false,
-                provider: config.provider.clone(),
-                file_id: None,
-                message: format!("上传失败: {}", e),
+            Err(e) => {
+                all_success = false;
+                UploadResult {
+                    success: false,
+                    provider: config.provider.clone(),
+                    file_id: None,
+                    message: format!("上传失败: {}", e),
+                    source_deleted: false,
+                }
             },
-        });
+        };
+        results.push(upload_result);
+    }
+    
+    // 如果所有上传都成功且需要删除源文件
+    if all_success && delete_source.unwrap_or(false) {
+        let path = Path::new(&file_path);
+        if path.exists() {
+            let delete_result = if path.is_dir() {
+                fs::remove_dir_all(path)
+            } else {
+                fs::remove_file(path)
+            };
+            
+            match delete_result {
+                Ok(_) => {
+                    // 更新所有结果，标记源文件已删除
+                    for result in &mut results {
+                        result.source_deleted = true;
+                        result.message = format!("{} (已删除源文件)", result.message);
+                    }
+                }
+                Err(e) => {
+                    // 删除失败，但上传已成功，只在消息中记录
+                    for result in &mut results {
+                        result.message = format!("{} (删除源文件失败: {})", result.message, e);
+                    }
+                }
+            }
+        }
     }
     
     Ok(results)

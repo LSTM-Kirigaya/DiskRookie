@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { Trash2, MoveRight, File, FolderOpen, Clock, HardDrive, Check, X, Info, Cloud, Settings } from 'lucide-react'
-import { Button, Dialog, DialogTitle, DialogContent, DialogActions, Typography, Box, Chip, Checkbox, FormControlLabel, TextField, CircularProgress, LinearProgress } from '@mui/material'
+import { Button, Dialog, DialogTitle, DialogContent, DialogActions, Typography, Box, Chip, Checkbox, FormControlLabel, TextField, CircularProgress, LinearProgress, Snackbar, Alert } from '@mui/material'
 import type { CleanupSuggestion } from '../services/ai-analysis'
 import { readStorageFile } from '../services/storage'
 import { hasCloudStorageConfig, getDefaultCloudStorageConfig, getEnabledCloudStorageConfigs, CLOUD_STORAGE_PROVIDERS, type CloudStorageConfig } from '../services/settings'
@@ -11,11 +11,32 @@ const SKIP_CONFIRM_KEY = 'skip-action-confirm'
 interface Props {
   suggestion: CleanupSuggestion
   onDelete: (path: string) => Promise<void>
-  onMove: (path: string, configs?: CloudStorageConfig[], targetPath?: string) => Promise<void>
+  onMove: (path: string, configs?: CloudStorageConfig[], targetPath?: string, fileSize?: number) => Promise<void>
   onOpenCloudSettings?: () => void
+  selected?: boolean
+  onSelectChange?: (path: string, selected: boolean) => void
 }
 
-export function SuggestionCard({ suggestion, onDelete, onMove, onOpenCloudSettings }: Props) {
+// 解析文件大小字符串为字节数
+function parseSizeToBytes(sizeStr: string): number {
+  const match = sizeStr.match(/^([\d.]+)\s*(B|KB|MB|GB|TB)$/i)
+  if (!match) return 0
+  
+  const value = parseFloat(match[1])
+  const unit = match[2].toUpperCase()
+  
+  const units: Record<string, number> = {
+    'B': 1,
+    'KB': 1024,
+    'MB': 1024 * 1024,
+    'GB': 1024 * 1024 * 1024,
+    'TB': 1024 * 1024 * 1024 * 1024,
+  }
+  
+  return Math.floor(value * (units[unit] || 1))
+}
+
+export function SuggestionCard({ suggestion, onDelete, onMove, onOpenCloudSettings, selected = false, onSelectChange }: Props) {
   const [showConfirm, setShowConfirm] = useState(false)
   const [showDetail, setShowDetail] = useState(false)
   const [loading, setLoading] = useState(false)
@@ -30,6 +51,8 @@ export function SuggestionCard({ suggestion, onDelete, onMove, onOpenCloudSettin
   const [availableConfigs, setAvailableConfigs] = useState<CloudStorageConfig[]>([])
   const [selectedConfigs, setSelectedConfigs] = useState<CloudStorageConfig[]>([])
   const [cloudTargetPath, setCloudTargetPath] = useState('/备份')
+  const [toastOpen, setToastOpen] = useState(false)
+  const [toastMessage, setToastMessage] = useState('')
 
   useEffect(() => {
     readStorageFile(SKIP_CONFIRM_KEY).then(val => {
@@ -95,16 +118,18 @@ export function SuggestionCard({ suggestion, onDelete, onMove, onOpenCloudSettin
         await onMove(
           suggestion.path, 
           selectedConfigs.length > 0 ? selectedConfigs : undefined,
-          cloudTargetPath
+          cloudTargetPath,
+          parseSizeToBytes(suggestion.size)
         )
       }
+      // 成功后直接关闭对话框，不显示成功界面
+      setShowConfirm(false)
       setSuccess(true)
-      setTimeout(() => {
-        setShowConfirm(false)
-        setSuccess(false)
-      }, 1000)
     } catch (err) {
-      setError(String(err))
+      // 失败时显示 toast
+      setToastMessage(String(err))
+      setToastOpen(true)
+      setShowConfirm(false)
     } finally {
       setLoading(false)
     }
@@ -141,6 +166,25 @@ export function SuggestionCard({ suggestion, onDelete, onMove, onOpenCloudSettin
       {/* 简化的卡片 */}
       <div className="bg-white dark:bg-gray-800 border border-slate-200 dark:border-gray-700 rounded-xl p-3 hover:border-slate-300 dark:hover:border-gray-600 transition-all">
         <div className="flex items-center gap-3">
+          {/* 左侧复选框 */}
+          {onSelectChange && (
+            <Checkbox
+              size="small"
+              checked={selected}
+              onChange={(e) => {
+                e.stopPropagation()
+                onSelectChange(suggestion.path, e.target.checked)
+              }}
+              onClick={(e) => e.stopPropagation()}
+              sx={{
+                p: 0.5,
+                color: 'text.secondary',
+                '&.Mui-checked': {
+                  color: actionColor,
+                },
+              }}
+            />
+          )}
           {/* 左侧图标 */}
           <div 
             className="w-9 h-9 rounded-lg flex items-center justify-center shrink-0"
@@ -262,14 +306,7 @@ export function SuggestionCard({ suggestion, onDelete, onMove, onOpenCloudSettin
         </DialogTitle>
         
         <DialogContent sx={{ py: 2, px: 3 }} className="dark:text-gray-100">
-          {success ? (
-            <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2, py: 3 }}>
-              <Check size={40} className="text-green-500" />
-              <Typography variant="body1" sx={{ fontWeight: 600, color: 'success.main' }}>
-                操作成功！
-              </Typography>
-            </Box>
-          ) : loading && suggestion.action === 'move' ? (
+          {loading && suggestion.action === 'move' ? (
             // 上传进度显示
             <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2, py: 3 }}>
               <Box sx={{ position: 'relative', display: 'inline-flex' }}>
@@ -419,51 +456,49 @@ export function SuggestionCard({ suggestion, onDelete, onMove, onOpenCloudSettin
           )}
         </DialogContent>
 
-        {!success && (
-          <DialogActions sx={{ borderTop: 1, borderColor: 'divider', p: 2, gap: 1 }} className="dark:!border-gray-700">
-            <Button 
-              onClick={() => setShowConfirm(false)} 
-              disabled={loading}
-              variant="outlined"
-              size="small"
-              sx={{
-                textTransform: 'none',
-                borderRadius: '8px',
-                fontSize: '12px',
-                color: 'text.secondary',
-                borderColor: 'divider',
-              }}
-              className="dark:!border-gray-600 dark:!text-gray-300"
-            >
-              取消
-            </Button>
-            <Button
-              onClick={handleConfirm}
-              disabled={loading}
-              variant="contained"
-              size="small"
-              sx={{
-                textTransform: 'none',
-                borderRadius: '8px',
+        <DialogActions sx={{ borderTop: 1, borderColor: 'divider', p: 2, gap: 1 }} className="dark:!border-gray-700">
+          <Button 
+            onClick={() => setShowConfirm(false)} 
+            disabled={loading}
+            variant="outlined"
+            size="small"
+            sx={{
+              textTransform: 'none',
+              borderRadius: '8px',
+              fontSize: '12px',
+              color: 'text.secondary',
+              borderColor: 'divider',
+            }}
+            className="dark:!border-gray-600 dark:!text-gray-300"
+          >
+            取消
+          </Button>
+          <Button
+            onClick={handleConfirm}
+            disabled={loading}
+            variant="contained"
+            size="small"
+            sx={{
+              textTransform: 'none',
+              borderRadius: '8px',
+              bgcolor: actionColor,
+              color: 'white',
+              fontSize: '12px',
+              fontWeight: 700,
+              boxShadow: 'none',
+              '&:hover': {
                 bgcolor: actionColor,
-                color: 'white',
-                fontSize: '12px',
-                fontWeight: 700,
+                filter: 'brightness(0.9)',
                 boxShadow: 'none',
-                '&:hover': {
-                  bgcolor: actionColor,
-                  filter: 'brightness(0.9)',
-                  boxShadow: 'none',
-                },
-                '&.Mui-disabled': {
-                  bgcolor: 'action.disabledBackground'
-                }
-              }}
-            >
-              {loading ? '处理中...' : `确认${actionLabel}`}
-            </Button>
-          </DialogActions>
-        )}
+              },
+              '&.Mui-disabled': {
+                bgcolor: 'action.disabledBackground'
+              }
+            }}
+          >
+            {loading ? '处理中...' : `确认${actionLabel}`}
+          </Button>
+        </DialogActions>
       </Dialog>
 
       {/* 详情对话框 */}
@@ -809,6 +844,26 @@ export function SuggestionCard({ suggestion, onDelete, onMove, onOpenCloudSettin
         availableConfigs={availableConfigs}
         fileName={suggestion.path.split('/').pop() || suggestion.path}
       />
+
+      {/* 错误提示 Toast */}
+      <Snackbar
+        open={toastOpen}
+        autoHideDuration={5000}
+        onClose={() => setToastOpen(false)}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+      >
+        <Alert 
+          onClose={() => setToastOpen(false)} 
+          severity="error" 
+          variant="filled"
+          sx={{ 
+            width: '100%',
+            borderRadius: '10px',
+          }}
+        >
+          {toastMessage}
+        </Alert>
+      </Snackbar>
     </>
   )
 }
