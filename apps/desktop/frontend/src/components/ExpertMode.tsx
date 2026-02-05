@@ -426,7 +426,11 @@ export function ExpertMode({ onOpenSettings, loadedSnapshot, onSnapshotLoaded, s
         // 检查是否有迁移操作且没有配置云存储
         const hasMoveItems = itemsToProcess.some(item => item.action === 'move')
         if (hasMoveItems && selectedMigrationConfigs.length === 0) {
-            showNotification('未配置云存储', '请先点击"设置迁移目标"配置云存储服务')
+            // 先获取可用的云存储配置
+            const configs = await getEnabledCloudStorageConfigs()
+            // 打开选择云存储目标对话框（如果没有配置，对话框内会显示链接到设置）
+            setAvailableConfigs(configs)
+            setShowCloudSelector(true)
             return
         }
         
@@ -492,12 +496,7 @@ export function ExpertMode({ onOpenSettings, loadedSnapshot, onSnapshotLoaded, s
     // 设置迁移目标
     const handleSetMigrationTarget = useCallback(async () => {
         const configs = await getEnabledCloudStorageConfigs()
-
-        if (configs.length === 0) {
-            showNotification('未配置云存储', '请先在设置中配置至少一个云存储服务')
-            return
-        }
-
+        // 打开选择云存储目标对话框（如果没有配置，对话框内会显示链接到设置）
         setAvailableConfigs(configs)
         setShowCloudSelector(true)
     }, [])
@@ -1339,6 +1338,7 @@ export function ExpertMode({ onOpenSettings, loadedSnapshot, onSnapshotLoaded, s
                 availableConfigs={availableConfigs}
                 fileName="迁移文件"
                 preselectedConfigs={selectedMigrationConfigs}
+                onOpenSettings={onOpenSettings}
             />
         </div>
     );

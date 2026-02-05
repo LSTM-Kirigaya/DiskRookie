@@ -27,6 +27,9 @@ open = "5"
 tiny_http = "0.12"
 urlencoding = "2"
 dotenvy_macro = "0.15"
+log = "0.4"
+env_logger = "0.11"
+futures = "0.3"
 
 # Workspace crates
 ai-disk-common = { path = "../../../crates/common" }

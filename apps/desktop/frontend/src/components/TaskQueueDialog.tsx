@@ -122,9 +122,16 @@ function TaskItem({
             </Typography>
           )}
           {task.status === 'uploading' && (
-            <Typography variant="caption" sx={{ color: 'primary.main', fontWeight: 600 }}>
-              {task.progress}%
-            </Typography>
+            <>
+              <Typography variant="caption" sx={{ color: 'primary.main', fontWeight: 600 }}>
+                {task.progress}%
+              </Typography>
+              {task.uploadSpeed && task.uploadSpeed > 0 && (
+                <Typography variant="caption" sx={{ color: 'text.secondary' }}>
+                  {formatFileSize(task.uploadSpeed)}/s
+                </Typography>
+              )}
+            </>
           )}
           {task.completedAt && task.startedAt && (
             <Typography variant="caption" sx={{ color: 'text.secondary', display: 'flex', alignItems: 'center', gap: 0.5 }}>

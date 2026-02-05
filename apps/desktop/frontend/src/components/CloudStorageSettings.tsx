@@ -42,12 +42,38 @@ import {
   getGoogleUserInfo,
   getGoogleDriveQuota,
   revokeGoogleToken,
+  startBaiduOAuth,
+  getBaiduUserInfo,
+  getBaiduNetdiskQuota,
+  revokeBaiduToken,
+  startAliyunOAuth,
+  getAliyunUserInfo,
+  getAliyunDriveQuota,
+  revokeAliyunToken,
+  startDropboxOAuth,
+  getDropboxUserInfo,
+  getDropboxQuota,
+  revokeDropboxToken,
   type CloudStorageSettings as CloudStorageSettingsType,
   type CloudStorageConfig,
   type CloudStorageProvider,
   type GoogleUserInfo,
   type GoogleDriveQuota,
+  type BaiduUserInfo,
+  type BaiduNetdiskQuota,
+  type AliyunUserInfo,
+  type AliyunDriveQuota,
+  type DropboxUserInfo,
+  type DropboxQuota,
 } from '../services/settings'
+
+// 统一的用户信息类型
+interface UserInfo {
+  id: string
+  email: string
+  name: string
+  picture?: string
+}
 
 interface Props {
   onConfigured?: () => void
@@ -96,7 +122,7 @@ function ProviderIcon({ provider, size = 20 }: { provider: CloudStorageProvider;
 }
 
 // 支持 OAuth 的提供商
-const OAUTH_PROVIDERS: CloudStorageProvider[] = ['google_drive']
+const OAUTH_PROVIDERS: CloudStorageProvider[] = ['google_drive', 'baidu_netdisk', 'aliyun_drive', 'dropbox']
 
 // 添加/编辑配置对话框
 function ConfigDialog({
@@ -120,9 +146,9 @@ function ConfigDialog({
   // OAuth 状态
   const [isAuthenticating, setIsAuthenticating] = useState(false)
   const [authError, setAuthError] = useState<string | null>(null)
-  const [userInfo, setUserInfo] = useState<GoogleUserInfo | null>(null)
+  const [userInfo, setUserInfo] = useState<UserInfo | null>(null)
   const [tokens, setTokens] = useState<{ accessToken: string; refreshToken?: string; tokenExpiry: number } | null>(null)
-  const [driveQuota, setDriveQuota] = useState<GoogleDriveQuota | null>(null)
+  const [driveQuota, setDriveQuota] = useState<GoogleDriveQuota | BaiduNetdiskQuota | AliyunDriveQuota | DropboxQuota | null>(null)
 
   useEffect(() => {
     if (dialogOpen) {
@@ -141,14 +167,49 @@ function ConfigDialog({
             refreshToken: config.refreshToken,
             tokenExpiry: config.tokenExpiry || 0,
           })
-          // 获取用户信息
-          getGoogleUserInfo(config.accessToken)
-            .then(setUserInfo)
-            .catch(() => setUserInfo(null))
-          // 获取存储配额
-          getGoogleDriveQuota(config.accessToken)
-            .then(setDriveQuota)
-            .catch(() => setDriveQuota(null))
+          // 根据提供商获取用户信息和存储配额
+          if (config.provider === 'baidu_netdisk') {
+            getBaiduUserInfo(config.accessToken)
+              .then(info => setUserInfo({
+                id: info.openid || '',
+                email: '',
+                name: info.username || '百度网盘用户',
+              }))
+              .catch(() => setUserInfo(null))
+            getBaiduNetdiskQuota(config.accessToken)
+              .then(setDriveQuota)
+              .catch(() => setDriveQuota(null))
+          } else if (config.provider === 'aliyun_drive') {
+            getAliyunUserInfo(config.accessToken)
+              .then(info => setUserInfo({
+                id: info.user_id || '',
+                email: info.email || '',
+                name: info.nick_name || info.user_name || '阿里云盘用户',
+              }))
+              .catch(() => setUserInfo(null))
+            getAliyunDriveQuota(config.accessToken)
+              .then(setDriveQuota)
+              .catch(() => setDriveQuota(null))
+          } else if (config.provider === 'dropbox') {
+            getDropboxUserInfo(config.accessToken)
+              .then(info => setUserInfo({
+                id: info.account_id || '',
+                email: info.email || '',
+                name: info.name.display_name || `${info.name.given_name} ${info.name.surname}`,
+                picture: info.profile_photo_url,
+              }))
+              .catch(() => setUserInfo(null))
+            getDropboxQuota(config.accessToken)
+              .then(setDriveQuota)
+              .catch(() => setDriveQuota(null))
+          } else if (config.provider === 'google_drive') {
+            getGoogleUserInfo(config.accessToken)
+              .then(setUserInfo)
+              .catch(() => setUserInfo(null))
+            getGoogleDriveQuota(config.accessToken)
+              .then(setDriveQuota)
+              .catch(() => setDriveQuota(null))
+          }
         }
       } else {
         setProvider('google_drive')
@@ -219,11 +280,190 @@ function ConfigDialog({
     }
   }
 
+  // 处理百度网盘 OAuth 登录
+  const handleBaiduLogin = async () => {
+    setIsAuthenticating(true)
+    setAuthError(null)
+    
+    try {
+      const oauthTokens = await startBaiduOAuth()
+      
+      const now = Date.now()
+      setTokens({
+        accessToken: oauthTokens.access_token,
+        refreshToken: oauthTokens.refresh_token,
+        tokenExpiry: now + oauthTokens.expires_in * 1000,
+      })
+      
+      // 获取用户信息（失败不影响授权成功）
+      try {
+        const info = await getBaiduUserInfo(oauthTokens.access_token)
+        setUserInfo({
+          id: info.openid || '',
+          email: '',
+          name: info.username || '百度网盘用户',
+        })
+        
+        // 自动设置名称
+        if (!name && info.username) {
+          setName(info.username)
+        }
+      } catch (userInfoErr) {
+        console.warn('获取用户信息失败，但授权已成功:', userInfoErr)
+        // 用户信息获取失败不影响授权成功，使用默认值
+        setUserInfo({
+          id: '',
+          email: '',
+          name: '百度网盘用户',
+        })
+      }
+      
+      // 获取存储配额
+      try {
+        const quota = await getBaiduNetdiskQuota(oauthTokens.access_token)
+        setDriveQuota(quota)
+      } catch (quotaErr) {
+        console.warn('获取存储配额失败:', quotaErr)
+        setDriveQuota(null)
+      }
+    } catch (err) {
+      setAuthError(err instanceof Error ? err.message : '授权失败')
+    } finally {
+      setIsAuthenticating(false)
+    }
+  }
+
+  // 处理阿里云盘 OAuth 登录
+  const handleAliyunLogin = async () => {
+    setIsAuthenticating(true)
+    setAuthError(null)
+    
+    try {
+      const oauthTokens = await startAliyunOAuth()
+      
+      const now = Date.now()
+      setTokens({
+        accessToken: oauthTokens.access_token,
+        refreshToken: oauthTokens.refresh_token,
+        tokenExpiry: now + oauthTokens.expires_in * 1000,
+      })
+      
+      // 获取用户信息（失败不影响授权成功）
+      try {
+        const info = await getAliyunUserInfo(oauthTokens.access_token)
+        setUserInfo({
+          id: info.user_id || '',
+          email: info.email || '',
+          name: info.nick_name || info.user_name || '阿里云盘用户',
+        })
+        
+        // 自动设置名称
+        if (!name && (info.nick_name || info.user_name)) {
+          setName(info.nick_name || info.user_name || '')
+        }
+      } catch (userInfoErr) {
+        console.warn('获取用户信息失败，但授权已成功:', userInfoErr)
+        setUserInfo({
+          id: '',
+          email: '',
+          name: '阿里云盘用户',
+        })
+      }
+      
+      // 获取存储配额
+      try {
+        const quota = await getAliyunDriveQuota(oauthTokens.access_token)
+        setDriveQuota(quota)
+      } catch (quotaErr) {
+        console.warn('获取存储配额失败:', quotaErr)
+        setDriveQuota(null)
+      }
+    } catch (err) {
+      setAuthError(err instanceof Error ? err.message : '授权失败')
+    } finally {
+      setIsAuthenticating(false)
+    }
+  }
+
+  // 处理 Dropbox OAuth 登录
+  const handleDropboxLogin = async () => {
+    setIsAuthenticating(true)
+    setAuthError(null)
+    
+    try {
+      const oauthTokens = await startDropboxOAuth()
+      
+      const now = Date.now()
+      setTokens({
+        accessToken: oauthTokens.access_token,
+        refreshToken: oauthTokens.refresh_token,
+        tokenExpiry: now + oauthTokens.expires_in * 1000,
+      })
+      
+      // 获取用户信息（失败不影响授权成功）
+      try {
+        const info = await getDropboxUserInfo(oauthTokens.access_token)
+        setUserInfo({
+          id: info.account_id || '',
+          email: info.email || '',
+          name: info.name.display_name || `${info.name.given_name} ${info.name.surname}`,
+          picture: info.profile_photo_url,
+        })
+        
+        // 自动设置名称
+        if (!name && info.name.display_name) {
+          setName(info.name.display_name)
+        }
+      } catch (userInfoErr) {
+        console.warn('获取用户信息失败，但授权已成功:', userInfoErr)
+        setUserInfo({
+          id: '',
+          email: '',
+          name: 'Dropbox 用户',
+        })
+      }
+      
+      // 获取存储配额
+      try {
+        const quota = await getDropboxQuota(oauthTokens.access_token)
+        setDriveQuota(quota)
+      } catch (quotaErr) {
+        console.warn('获取存储配额失败:', quotaErr)
+        setDriveQuota(null)
+      }
+    } catch (err) {
+      setAuthError(err instanceof Error ? err.message : '授权失败')
+    } finally {
+      setIsAuthenticating(false)
+    }
+  }
+
+  // 通用的 OAuth 登录处理函数
+  const handleOAuthLogin = async () => {
+    if (provider === 'baidu_netdisk') {
+      await handleBaiduLogin()
+    } else if (provider === 'aliyun_drive') {
+      await handleAliyunLogin()
+    } else if (provider === 'dropbox') {
+      await handleDropboxLogin()
+    } else if (provider === 'google_drive') {
+      await handleGoogleLogin()
+    }
+  }
+
   // 处理断开连接
   const handleDisconnect = async () => {
     if (tokens?.accessToken) {
       try {
-        await revokeGoogleToken(tokens.accessToken)
+        if (provider === 'baidu_netdisk') {
+          await revokeBaiduToken(tokens.accessToken)
+        } else if (provider === 'aliyun_drive') {
+          await revokeAliyunToken(tokens.accessToken)
+        } else if (provider === 'dropbox') {
+          await revokeDropboxToken(tokens.accessToken)
+        } else if (provider === 'google_drive') {
+          await revokeGoogleToken(tokens.accessToken)
+        }
       } catch {
         // 忽略撤销错误
       }
@@ -377,7 +617,7 @@ function ConfigDialog({
                   </Box>
                   
                   {/* 存储容量显示 */}
-                  {driveQuota?.storageQuota && (
+                  {driveQuota && (
                     <Box
                       sx={{
                         mt: 1.5,
@@ -387,40 +627,196 @@ function ConfigDialog({
                       }}
                       className="dark:!bg-gray-700/50"
                     >
-                      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
-                        <Typography variant="caption" sx={{ fontWeight: 600, color: 'text.secondary' }}>
-                          存储空间
-                        </Typography>
-                        <Typography variant="caption" sx={{ color: 'text.secondary' }}>
-                          {formatStorageSize(driveQuota.storageQuota.usage)} / {formatStorageSize(driveQuota.storageQuota.limit)}
-                        </Typography>
-                      </Box>
-                      <Box
-                        sx={{
-                          width: '100%',
-                          height: 6,
-                          borderRadius: 3,
-                          bgcolor: 'divider',
-                          overflow: 'hidden',
-                        }}
-                      >
-                        <Box
-                          sx={{
-                            width: `${Math.min(100, (parseInt(driveQuota.storageQuota.usage) / parseInt(driveQuota.storageQuota.limit)) * 100)}%`,
-                            height: '100%',
-                            borderRadius: 3,
-                            bgcolor: parseInt(driveQuota.storageQuota.usage) / parseInt(driveQuota.storageQuota.limit) > 0.9 
-                              ? 'error.main' 
-                              : parseInt(driveQuota.storageQuota.usage) / parseInt(driveQuota.storageQuota.limit) > 0.7 
-                              ? 'warning.main' 
-                              : 'primary.main',
-                            transition: 'width 0.3s ease',
-                          }}
-                        />
-                      </Box>
-                      <Typography variant="caption" sx={{ color: 'text.secondary', mt: 0.5, display: 'block', fontSize: '10px' }}>
-                        可用: {formatStorageSize(parseInt(driveQuota.storageQuota.limit) - parseInt(driveQuota.storageQuota.usage))}
-                      </Typography>
+                      {(() => {
+                        // Google Drive 格式
+                        if (driveQuota.storageQuota) {
+                          const usage = parseInt(driveQuota.storageQuota.usage || '0')
+                          const limit = parseInt(driveQuota.storageQuota.limit || '0')
+                          const percentage = limit > 0 ? (usage / limit) * 100 : 0
+                          
+                          return (
+                            <>
+                              <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
+                                <Typography variant="caption" sx={{ fontWeight: 600, color: 'text.secondary' }}>
+                                  存储空间
+                                </Typography>
+                                <Typography variant="caption" sx={{ color: 'text.secondary' }}>
+                                  {formatStorageSize(usage)} / {formatStorageSize(limit)}
+                                </Typography>
+                              </Box>
+                              <Box
+                                sx={{
+                                  width: '100%',
+                                  height: 6,
+                                  borderRadius: 3,
+                                  bgcolor: 'divider',
+                                  overflow: 'hidden',
+                                }}
+                              >
+                                <Box
+                                  sx={{
+                                    width: `${Math.min(100, percentage)}%`,
+                                    height: '100%',
+                                    borderRadius: 3,
+                                    bgcolor: percentage > 90 
+                                      ? 'error.main' 
+                                      : percentage > 70 
+                                      ? 'warning.main' 
+                                      : 'primary.main',
+                                    transition: 'width 0.3s ease',
+                                  }}
+                                />
+                              </Box>
+                              <Typography variant="caption" sx={{ color: 'text.secondary', mt: 0.5, display: 'block', fontSize: '10px' }}>
+                                可用: {formatStorageSize(limit - usage)}
+                              </Typography>
+                            </>
+                          )
+                        }
+                        // 百度网盘格式
+                        else if (driveQuota.total !== undefined && 'used' in driveQuota) {
+                          const used = driveQuota.used || 0
+                          const total = driveQuota.total || 0
+                          const free = driveQuota.free || (total - used)
+                          const percentage = total > 0 ? (used / total) * 100 : 0
+                          
+                          return (
+                            <>
+                              <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
+                                <Typography variant="caption" sx={{ fontWeight: 600, color: 'text.secondary' }}>
+                                  存储空间
+                                </Typography>
+                                <Typography variant="caption" sx={{ color: 'text.secondary' }}>
+                                  {formatStorageSize(used)} / {formatStorageSize(total)}
+                                </Typography>
+                              </Box>
+                              <Box
+                                sx={{
+                                  width: '100%',
+                                  height: 6,
+                                  borderRadius: 3,
+                                  bgcolor: 'divider',
+                                  overflow: 'hidden',
+                                }}
+                              >
+                                <Box
+                                  sx={{
+                                    width: `${Math.min(100, percentage)}%`,
+                                    height: '100%',
+                                    borderRadius: 3,
+                                    bgcolor: percentage > 90 
+                                      ? 'error.main' 
+                                      : percentage > 70 
+                                      ? 'warning.main' 
+                                      : 'primary.main',
+                                    transition: 'width 0.3s ease',
+                                  }}
+                                />
+                              </Box>
+                              <Typography variant="caption" sx={{ color: 'text.secondary', mt: 0.5, display: 'block', fontSize: '10px' }}>
+                                可用: {formatStorageSize(free)}
+                              </Typography>
+                            </>
+                          )
+                        }
+                        // 阿里云盘格式
+                        else if ('total_size' in driveQuota || 'used_size' in driveQuota) {
+                          const used = driveQuota.used_size || 0
+                          const total = driveQuota.total_size || 0
+                          const free = driveQuota.available_size || (total - used)
+                          const percentage = total > 0 ? (used / total) * 100 : 0
+                          
+                          return (
+                            <>
+                              <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
+                                <Typography variant="caption" sx={{ fontWeight: 600, color: 'text.secondary' }}>
+                                  存储空间
+                                </Typography>
+                                <Typography variant="caption" sx={{ color: 'text.secondary' }}>
+                                  {formatStorageSize(used)} / {formatStorageSize(total)}
+                                </Typography>
+                              </Box>
+                              <Box
+                                sx={{
+                                  width: '100%',
+                                  height: 6,
+                                  borderRadius: 3,
+                                  bgcolor: 'divider',
+                                  overflow: 'hidden',
+                                }}
+                              >
+                                <Box
+                                  sx={{
+                                    width: `${Math.min(100, percentage)}%`,
+                                    height: '100%',
+                                    borderRadius: 3,
+                                    bgcolor: percentage > 90 
+                                      ? 'error.main' 
+                                      : percentage > 70 
+                                      ? 'warning.main' 
+                                      : 'primary.main',
+                                    transition: 'width 0.3s ease',
+                                  }}
+                                />
+                              </Box>
+                              <Typography variant="caption" sx={{ color: 'text.secondary', mt: 0.5, display: 'block', fontSize: '10px' }}>
+                                可用: {formatStorageSize(free)}
+                              </Typography>
+                            </>
+                          )
+                        }
+                        // Dropbox 格式
+                        else if ('used' in driveQuota && 'allocation' in driveQuota) {
+                          const used = driveQuota.used || 0
+                          const total = driveQuota.allocation?.allocated || 0
+                          const free = total > 0 ? (total - used) : 0
+                          const percentage = total > 0 ? (used / total) * 100 : 0
+                          
+                          return (
+                            <>
+                              <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
+                                <Typography variant="caption" sx={{ fontWeight: 600, color: 'text.secondary' }}>
+                                  存储空间
+                                </Typography>
+                                <Typography variant="caption" sx={{ color: 'text.secondary' }}>
+                                  {formatStorageSize(used)} / {total > 0 ? formatStorageSize(total) : '无限'}
+                                </Typography>
+                              </Box>
+                              {total > 0 && (
+                                <>
+                                  <Box
+                                    sx={{
+                                      width: '100%',
+                                      height: 6,
+                                      borderRadius: 3,
+                                      bgcolor: 'divider',
+                                      overflow: 'hidden',
+                                    }}
+                                  >
+                                    <Box
+                                      sx={{
+                                        width: `${Math.min(100, percentage)}%`,
+                                        height: '100%',
+                                        borderRadius: 3,
+                                        bgcolor: percentage > 90 
+                                          ? 'error.main' 
+                                          : percentage > 70 
+                                          ? 'warning.main' 
+                                          : 'primary.main',
+                                        transition: 'width 0.3s ease',
+                                      }}
+                                    />
+                                  </Box>
+                                  <Typography variant="caption" sx={{ color: 'text.secondary', mt: 0.5, display: 'block', fontSize: '10px' }}>
+                                    可用: {formatStorageSize(free)}
+                                  </Typography>
+                                </>
+                              )}
+                            </>
+                          )
+                        }
+                        return null
+                      })()}
                     </Box>
                   )}
                 </>
@@ -429,7 +825,7 @@ function ConfigDialog({
                 <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
                   <Button
                     variant="contained"
-                    onClick={handleGoogleLogin}
+                    onClick={handleOAuthLogin}
                     disabled={isAuthenticating}
                     startIcon={
                       isAuthenticating ? (
@@ -442,12 +838,20 @@ function ConfigDialog({
                       textTransform: 'none',
                       borderRadius: '10px',
                       py: 1.5,
-                      bgcolor: provider === 'google_drive' ? '#4285F4' : 'primary.main',
+                      bgcolor: provider === 'google_drive' ? '#4285F4' 
+                        : provider === 'baidu_netdisk' ? '#409EFF'
+                        : provider === 'aliyun_drive' ? '#0052FF'
+                        : provider === 'dropbox' ? '#0061FF'
+                        : 'primary.main',
                       color: 'white',
                       fontSize: '14px',
                       fontWeight: 600,
                       '&:hover': {
-                        bgcolor: provider === 'google_drive' ? '#3367D6' : 'primary.dark',
+                        bgcolor: provider === 'google_drive' ? '#3367D6' 
+                          : provider === 'baidu_netdisk' ? '#2CA6E0'
+                          : provider === 'aliyun_drive' ? '#0033CC'
+                          : provider === 'dropbox' ? '#0047CC'
+                          : 'primary.dark',
                       },
                     }}
                   >

@@ -843,6 +843,7 @@ export function SuggestionCard({ suggestion, onDelete, onMove, onOpenCloudSettin
         onConfirm={handleCloudStorageSelected}
         availableConfigs={availableConfigs}
         fileName={suggestion.path.split('/').pop() || suggestion.path}
+        onOpenSettings={onOpenCloudSettings}
       />
 
       {/* 错误提示 Toast */}

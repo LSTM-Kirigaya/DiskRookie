@@ -1,9 +1,15 @@
 mod commands;
 
 use commands::oauth::OAuthState;
+use log;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // 初始化日志系统
+    env_logger::Builder::from_default_env()
+        .filter_level(log::LevelFilter::Info)
+        .init();
+    
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
@@ -28,6 +34,24 @@ pub fn run() {
             commands::oauth::revoke_google_token,
             commands::oauth::get_google_user_info,
             commands::oauth::get_google_drive_quota,
+            // Baidu Netdisk OAuth commands
+            commands::oauth::complete_baidu_oauth,
+            commands::oauth::refresh_baidu_token,
+            commands::oauth::revoke_baidu_token,
+            commands::oauth::get_baidu_user_info,
+            commands::oauth::get_baidu_netdisk_quota,
+            // Aliyun Drive OAuth commands
+            commands::oauth::complete_aliyun_oauth,
+            commands::oauth::refresh_aliyun_token,
+            commands::oauth::revoke_aliyun_token,
+            commands::oauth::get_aliyun_user_info,
+            commands::oauth::get_aliyun_drive_quota,
+            // Dropbox OAuth commands
+            commands::oauth::complete_dropbox_oauth,
+            commands::oauth::refresh_dropbox_token,
+            commands::oauth::revoke_dropbox_token,
+            commands::oauth::get_dropbox_user_info,
+            commands::oauth::get_dropbox_quota,
             // Cloud upload commands
             commands::cloud_upload::upload_to_cloud,
         ])

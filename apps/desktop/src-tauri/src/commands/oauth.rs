@@ -13,6 +13,27 @@ const GOOGLE_AUTH_URL: &str = "https://accounts.google.com/o/oauth2/v2/auth";
 const GOOGLE_TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
 const GOOGLE_SCOPES: &str = "https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/userinfo.profile";
 
+// 百度网盘 OAuth 配置 - 从 .env 文件读取（编译时嵌入）
+const BAIDU_CLIENT_ID: &str = dotenvy_macro::dotenv!("BAIDU_CLIENT_ID");
+const BAIDU_CLIENT_SECRET: &str = dotenvy_macro::dotenv!("BAIDU_CLIENT_SECRET");
+const BAIDU_AUTH_URL: &str = "https://openapi.baidu.com/oauth/2.0/authorize";
+const BAIDU_TOKEN_URL: &str = "https://openapi.baidu.com/oauth/2.0/token";
+const BAIDU_SCOPES: &str = "netdisk"; // 百度网盘权限范围
+
+// 阿里云盘 OAuth 配置 - 从 .env 文件读取（编译时嵌入）
+const ALIYUN_CLIENT_ID: &str = dotenvy_macro::dotenv!("ALIYUN_CLIENT_ID");
+const ALIYUN_CLIENT_SECRET: &str = dotenvy_macro::dotenv!("ALIYUN_CLIENT_SECRET");
+const ALIYUN_AUTH_URL: &str = "https://openapi.alipan.com/oauth/authorize";
+const ALIYUN_TOKEN_URL: &str = "https://openapi.alipan.com/v2/oauth/token";
+const ALIYUN_SCOPES: &str = "user:base,file:all:read,file:all:write"; // 阿里云盘权限范围
+
+// Dropbox OAuth 配置 - 从 .env 文件读取（编译时嵌入）
+const DROPBOX_CLIENT_ID: &str = dotenvy_macro::dotenv!("DROPBOX_CLIENT_ID");
+const DROPBOX_CLIENT_SECRET: &str = dotenvy_macro::dotenv!("DROPBOX_CLIENT_SECRET");
+const DROPBOX_AUTH_URL: &str = "https://www.dropbox.com/oauth2/authorize";
+const DROPBOX_TOKEN_URL: &str = "https://api.dropbox.com/oauth2/token";
+const DROPBOX_SCOPES: &str = "files.content.write files.content.read account_info.read"; // Dropbox 权限范围
+
 // OAuth 状态管理（用于管理未来的多账号场景）
 #[allow(dead_code)]
 pub struct OAuthState {
@@ -618,6 +639,594 @@ pub async fn get_google_drive_quota(access_token: String) -> Result<serde_json::
     let client = reqwest::Client::new();
     let response = client
         .get("https://www.googleapis.com/drive/v3/about?fields=storageQuota,user")
+        .bearer_auth(&access_token)
+        .send()
+        .await
+        .map_err(|e| format!("获取存储配额失败: {}", e))?;
+
+    if !response.status().is_success() {
+        let error_text = response.text().await.unwrap_or_default();
+        return Err(format!("获取存储配额失败: {}", error_text));
+    }
+
+    let quota_info: serde_json::Value = response
+        .json()
+        .await
+        .map_err(|e| format!("解析存储配额失败: {}", e))?;
+
+    Ok(quota_info)
+}
+
+// ========== 百度网盘 OAuth 实现 ==========
+
+/// 完成百度网盘 OAuth 授权（等待回调并交换 token）
+/// 注意：百度网盘不支持 PKCE，使用标准的授权码模式
+#[tauri::command]
+pub async fn complete_baidu_oauth(
+    _oauth_state: State<'_, OAuthState>,
+) -> Result<OAuthTokens, String> {
+    println!("开始百度网盘 OAuth 授权流程");
+    
+    // 启动本地回调服务器
+    let (server, port) = start_callback_server()?;
+    let redirect_uri = format!("http://127.0.0.1:{}", port);
+    println!("本地回调服务器已启动，端口: {}", port);
+    
+    // 生成 state（用于 CSRF 防护）
+    let state = generate_random_string(32);
+    println!("State 参数已生成");
+
+    // 构建授权 URL（百度网盘不支持 PKCE）
+    let auth_url = format!(
+        "{}?response_type=code&client_id={}&redirect_uri={}&scope={}&state={}",
+        BAIDU_AUTH_URL,
+        urlencoding::encode(BAIDU_CLIENT_ID),
+        urlencoding::encode(&redirect_uri),
+        urlencoding::encode(BAIDU_SCOPES),
+        urlencoding::encode(&state)
+    );
+    println!("授权 URL: {}", auth_url);
+
+    // 打开浏览器
+    println!("正在打开浏览器...");
+    open::that(&auth_url).map_err(|e| format!("无法打开浏览器: {}", e))?;
+
+    // 在阻塞线程池中等待回调（避免阻塞 async runtime）
+    println!("等待用户授权...");
+    println!("回调 URL: {}", redirect_uri);
+    let (code, received_state) = tokio::task::spawn_blocking(move || {
+        println!("回调服务器正在监听...");
+        let result = wait_for_callback(server);
+        println!("回调服务器收到响应: {:?}", result.is_ok());
+        result
+    })
+    .await
+    .map_err(|e| format!("等待回调失败: {}", e))??;
+    
+    println!("收到授权码，验证 state...");
+
+    // 验证 state
+    if received_state != state {
+        return Err("State 验证失败，可能存在 CSRF 攻击".to_string());
+    }
+
+    // 交换授权码获取 token（百度网盘使用 GET 请求）
+    println!("开始交换授权码获取 token...");
+    let client = reqwest::Client::new();
+    let token_url = format!(
+        "{}?grant_type=authorization_code&code={}&client_id={}&client_secret={}&redirect_uri={}",
+        BAIDU_TOKEN_URL,
+        urlencoding::encode(&code),
+        urlencoding::encode(BAIDU_CLIENT_ID),
+        urlencoding::encode(BAIDU_CLIENT_SECRET),
+        urlencoding::encode(&redirect_uri)
+    );
+    
+    let token_response = client
+        .get(&token_url)
+        .send()
+        .await
+        .map_err(|e| {
+            println!("Token 请求发送失败: {}", e);
+            format!("Token 请求失败: {}", e)
+        })?;
+
+    let status = token_response.status();
+    println!("Token 响应状态码: {}", status);
+
+    if !status.is_success() {
+        let error_text = token_response.text().await.unwrap_or_default();
+        println!("Token 请求失败，响应内容: {}", error_text);
+        return Err(format!("Token 请求失败 ({}): {}", status, error_text));
+    }
+
+    let response_text = token_response.text().await.map_err(|e| {
+        println!("读取 token 响应失败: {}", e);
+        format!("读取 token 响应失败: {}", e)
+    })?;
+    
+    println!("Token 响应内容: {}", response_text);
+
+    // 百度网盘返回的 token 格式可能不同，需要适配
+    let tokens: OAuthTokens = serde_json::from_str(&response_text)
+        .map_err(|e| {
+            println!("解析 token 响应失败: {}", e);
+            format!("解析 token 响应失败: {}", e)
+        })?;
+
+    println!("成功获取 token！");
+    Ok(tokens)
+}
+
+/// 刷新百度网盘 OAuth access token
+#[tauri::command]
+pub async fn refresh_baidu_token(refresh_token: String) -> Result<OAuthTokens, String> {
+    let client = reqwest::Client::new();
+    let token_url = format!(
+        "{}?grant_type=refresh_token&refresh_token={}&client_id={}&client_secret={}",
+        BAIDU_TOKEN_URL,
+        urlencoding::encode(&refresh_token),
+        urlencoding::encode(BAIDU_CLIENT_ID),
+        urlencoding::encode(BAIDU_CLIENT_SECRET)
+    );
+    
+    let token_response = client
+        .get(&token_url)
+        .send()
+        .await
+        .map_err(|e| format!("刷新 token 失败: {}", e))?;
+
+    if !token_response.status().is_success() {
+        let error_text = token_response.text().await.unwrap_or_default();
+        return Err(format!("刷新 token 失败: {}", error_text));
+    }
+
+    let tokens: OAuthTokens = token_response
+        .json()
+        .await
+        .map_err(|e| format!("解析 token 响应失败: {}", e))?;
+
+    Ok(tokens)
+}
+
+/// 撤销百度网盘 OAuth 授权
+/// 注意：百度网盘可能没有标准的撤销端点，这里提供一个占位实现
+#[tauri::command]
+pub async fn revoke_baidu_token(_token: String) -> Result<(), String> {
+    // 百度网盘可能不支持 token 撤销，或者需要调用特定的 API
+    // 这里先返回成功，实际使用时可能需要根据百度网盘的文档调整
+    println!("百度网盘 token 撤销（如果支持）");
+    Ok(())
+}
+
+/// 获取百度网盘用户信息
+#[tauri::command]
+pub async fn get_baidu_user_info(access_token: String) -> Result<serde_json::Value, String> {
+    let client = reqwest::Client::new();
+    let user_info_url = format!(
+        "https://openapi.baidu.com/rest/2.0/passport/users/getInfo?access_token={}",
+        urlencoding::encode(&access_token)
+    );
+    
+    let response = client
+        .get(&user_info_url)
+        .send()
+        .await
+        .map_err(|e| format!("获取用户信息失败: {}", e))?;
+
+    if !response.status().is_success() {
+        let error_text = response.text().await.unwrap_or_default();
+        return Err(format!("获取用户信息失败: {}", error_text));
+    }
+
+    let user_info: serde_json::Value = response
+        .json()
+        .await
+        .map_err(|e| format!("解析用户信息失败: {}", e))?;
+
+    Ok(user_info)
+}
+
+/// 获取百度网盘存储配额信息
+#[tauri::command]
+pub async fn get_baidu_netdisk_quota(access_token: String) -> Result<serde_json::Value, String> {
+    let client = reqwest::Client::new();
+    // 百度网盘获取容量信息的 API
+    let quota_url = format!(
+        "https://pan.baidu.com/rest/2.0/xpan/nas?method=uinfo&access_token={}",
+        urlencoding::encode(&access_token)
+    );
+    
+    let response = client
+        .get(&quota_url)
+        .send()
+        .await
+        .map_err(|e| format!("获取存储配额失败: {}", e))?;
+
+    if !response.status().is_success() {
+        let error_text = response.text().await.unwrap_or_default();
+        return Err(format!("获取存储配额失败: {}", error_text));
+    }
+
+    let quota_info: serde_json::Value = response
+        .json()
+        .await
+        .map_err(|e| format!("解析存储配额失败: {}", e))?;
+
+    Ok(quota_info)
+}
+
+// ========== 阿里云盘 OAuth 实现 ==========
+
+/// 完成阿里云盘 OAuth 授权（等待回调并交换 token）
+/// 阿里云盘支持 PKCE，使用 PKCE 流程增强安全性
+#[tauri::command]
+pub async fn complete_aliyun_oauth(
+    _oauth_state: State<'_, OAuthState>,
+) -> Result<OAuthTokens, String> {
+    println!("开始阿里云盘 OAuth 授权流程");
+    
+    // 启动本地回调服务器
+    let (server, port) = start_callback_server()?;
+    let redirect_uri = format!("http://127.0.0.1:{}", port);
+    println!("本地回调服务器已启动，端口: {}", port);
+    
+    // 生成 PKCE 和 state
+    let code_verifier = generate_code_verifier();
+    let code_challenge = generate_code_challenge(&code_verifier);
+    let state = generate_random_string(32);
+    println!("PKCE 参数已生成");
+
+    // 构建授权 URL（阿里云盘支持 PKCE）
+    let auth_url = format!(
+        "{}?client_id={}&redirect_uri={}&response_type=code&scope={}&code_challenge={}&code_challenge_method=S256&state={}&login_type=default",
+        ALIYUN_AUTH_URL,
+        urlencoding::encode(ALIYUN_CLIENT_ID),
+        urlencoding::encode(&redirect_uri),
+        urlencoding::encode(ALIYUN_SCOPES),
+        urlencoding::encode(&code_challenge),
+        urlencoding::encode(&state)
+    );
+    println!("授权 URL: {}", auth_url);
+
+    // 打开浏览器
+    println!("正在打开浏览器...");
+    open::that(&auth_url).map_err(|e| format!("无法打开浏览器: {}", e))?;
+
+    // 在阻塞线程池中等待回调（避免阻塞 async runtime）
+    println!("等待用户授权...");
+    println!("回调 URL: {}", redirect_uri);
+    let (code, received_state) = tokio::task::spawn_blocking(move || {
+        println!("回调服务器正在监听...");
+        let result = wait_for_callback(server);
+        println!("回调服务器收到响应: {:?}", result.is_ok());
+        result
+    })
+    .await
+    .map_err(|e| format!("等待回调失败: {}", e))??;
+    
+    println!("收到授权码，验证 state...");
+
+    // 验证 state
+    if received_state != state {
+        return Err("State 验证失败，可能存在 CSRF 攻击".to_string());
+    }
+
+    // 交换授权码获取 token（阿里云盘使用 POST 请求，支持 PKCE）
+    println!("开始交换授权码获取 token...");
+    let client = reqwest::Client::new();
+    let token_response = client
+        .post(ALIYUN_TOKEN_URL)
+        .form(&[
+            ("grant_type", "authorization_code"),
+            ("code", &code),
+            ("client_id", ALIYUN_CLIENT_ID),
+            ("client_secret", ALIYUN_CLIENT_SECRET),
+            ("redirect_uri", &redirect_uri),
+            ("code_verifier", &code_verifier),
+        ])
+        .send()
+        .await
+        .map_err(|e| {
+            println!("Token 请求发送失败: {}", e);
+            format!("Token 请求失败: {}", e)
+        })?;
+
+    let status = token_response.status();
+    println!("Token 响应状态码: {}", status);
+
+    if !status.is_success() {
+        let error_text = token_response.text().await.unwrap_or_default();
+        println!("Token 请求失败，响应内容: {}", error_text);
+        return Err(format!("Token 请求失败 ({}): {}", status, error_text));
+    }
+
+    let response_text = token_response.text().await.map_err(|e| {
+        println!("读取 token 响应失败: {}", e);
+        format!("读取 token 响应失败: {}", e)
+    })?;
+    
+    println!("Token 响应内容: {}", response_text);
+
+    let tokens: OAuthTokens = serde_json::from_str(&response_text)
+        .map_err(|e| {
+            println!("解析 token 响应失败: {}", e);
+            format!("解析 token 响应失败: {}", e)
+        })?;
+
+    println!("成功获取 token！");
+    Ok(tokens)
+}
+
+/// 刷新阿里云盘 OAuth access token
+#[tauri::command]
+pub async fn refresh_aliyun_token(refresh_token: String) -> Result<OAuthTokens, String> {
+    let client = reqwest::Client::new();
+    let token_response = client
+        .post(ALIYUN_TOKEN_URL)
+        .form(&[
+            ("grant_type", "refresh_token"),
+            ("refresh_token", refresh_token.as_str()),
+            ("client_id", ALIYUN_CLIENT_ID),
+            ("client_secret", ALIYUN_CLIENT_SECRET),
+        ])
+        .send()
+        .await
+        .map_err(|e| format!("刷新 token 失败: {}", e))?;
+
+    if !token_response.status().is_success() {
+        let error_text = token_response.text().await.unwrap_or_default();
+        return Err(format!("刷新 token 失败: {}", error_text));
+    }
+
+    let tokens: OAuthTokens = token_response
+        .json()
+        .await
+        .map_err(|e| format!("解析 token 响应失败: {}", e))?;
+
+    Ok(tokens)
+}
+
+/// 撤销阿里云盘 OAuth 授权
+#[tauri::command]
+pub async fn revoke_aliyun_token(_token: String) -> Result<(), String> {
+    // 阿里云盘可能没有标准的撤销端点，这里提供一个占位实现
+    println!("阿里云盘 token 撤销（如果支持）");
+    Ok(())
+}
+
+/// 获取阿里云盘用户信息
+#[tauri::command]
+pub async fn get_aliyun_user_info(access_token: String) -> Result<serde_json::Value, String> {
+    let client = reqwest::Client::new();
+    let user_info_url = "https://openapi.alipan.com/v2/user/get";
+    
+    let response = client
+        .get(user_info_url)
+        .header("Authorization", format!("Bearer {}", access_token))
+        .send()
+        .await
+        .map_err(|e| format!("获取用户信息失败: {}", e))?;
+
+    if !response.status().is_success() {
+        let error_text = response.text().await.unwrap_or_default();
+        return Err(format!("获取用户信息失败: {}", error_text));
+    }
+
+    let user_info: serde_json::Value = response
+        .json()
+        .await
+        .map_err(|e| format!("解析用户信息失败: {}", e))?;
+
+    Ok(user_info)
+}
+
+/// 获取阿里云盘存储配额信息
+#[tauri::command]
+pub async fn get_aliyun_drive_quota(access_token: String) -> Result<serde_json::Value, String> {
+    let client = reqwest::Client::new();
+    // 阿里云盘获取容量信息的 API（与用户信息 API 相同）
+    let quota_url = "https://openapi.alipan.com/v2/user/get";
+    
+    let response = client
+        .get(quota_url)
+        .header("Authorization", format!("Bearer {}", access_token))
+        .send()
+        .await
+        .map_err(|e| format!("获取存储配额失败: {}", e))?;
+
+    if !response.status().is_success() {
+        let error_text = response.text().await.unwrap_or_default();
+        return Err(format!("获取存储配额失败: {}", error_text));
+    }
+
+    let quota_info: serde_json::Value = response
+        .json()
+        .await
+        .map_err(|e| format!("解析存储配额失败: {}", e))?;
+
+    Ok(quota_info)
+}
+
+// ========== Dropbox OAuth 实现 ==========
+
+/// 完成 Dropbox OAuth 授权（等待回调并交换 token）
+/// Dropbox 支持 PKCE，使用 PKCE 流程增强安全性
+#[tauri::command]
+pub async fn complete_dropbox_oauth(
+    _oauth_state: State<'_, OAuthState>,
+) -> Result<OAuthTokens, String> {
+    println!("开始 Dropbox OAuth 授权流程");
+    
+    // 启动本地回调服务器
+    let (server, port) = start_callback_server()?;
+    let redirect_uri = format!("http://127.0.0.1:{}", port);
+    println!("本地回调服务器已启动，端口: {}", port);
+    
+    // 生成 PKCE 和 state
+    let code_verifier = generate_code_verifier();
+    let code_challenge = generate_code_challenge(&code_verifier);
+    let state = generate_random_string(32);
+    println!("PKCE 参数已生成");
+
+    // 构建授权 URL（Dropbox 支持 PKCE）
+    let auth_url = format!(
+        "{}?client_id={}&redirect_uri={}&response_type=code&scope={}&code_challenge={}&code_challenge_method=S256&state={}",
+        DROPBOX_AUTH_URL,
+        urlencoding::encode(DROPBOX_CLIENT_ID),
+        urlencoding::encode(&redirect_uri),
+        urlencoding::encode(DROPBOX_SCOPES),
+        urlencoding::encode(&code_challenge),
+        urlencoding::encode(&state)
+    );
+    println!("授权 URL: {}", auth_url);
+
+    // 打开浏览器
+    println!("正在打开浏览器...");
+    open::that(&auth_url).map_err(|e| format!("无法打开浏览器: {}", e))?;
+
+    // 在阻塞线程池中等待回调（避免阻塞 async runtime）
+    println!("等待用户授权...");
+    println!("回调 URL: {}", redirect_uri);
+    let (code, received_state) = tokio::task::spawn_blocking(move || {
+        println!("回调服务器正在监听...");
+        let result = wait_for_callback(server);
+        println!("回调服务器收到响应: {:?}", result.is_ok());
+        result
+    })
+    .await
+    .map_err(|e| format!("等待回调失败: {}", e))??;
+    
+    println!("收到授权码，验证 state...");
+
+    // 验证 state
+    if received_state != state {
+        return Err("State 验证失败，可能存在 CSRF 攻击".to_string());
+    }
+
+    // 交换授权码获取 token（Dropbox 使用 Basic Auth，支持 PKCE）
+    println!("开始交换授权码获取 token...");
+    let client = reqwest::Client::new();
+    let token_response = client
+        .post(DROPBOX_TOKEN_URL)
+        .basic_auth(DROPBOX_CLIENT_ID, Some(DROPBOX_CLIENT_SECRET))
+        .form(&[
+            ("grant_type", "authorization_code"),
+            ("code", &code),
+            ("redirect_uri", &redirect_uri),
+            ("code_verifier", &code_verifier),
+        ])
+        .send()
+        .await
+        .map_err(|e| {
+            println!("Token 请求发送失败: {}", e);
+            format!("Token 请求失败: {}", e)
+        })?;
+
+    let status = token_response.status();
+    println!("Token 响应状态码: {}", status);
+
+    if !status.is_success() {
+        let error_text = token_response.text().await.unwrap_or_default();
+        println!("Token 请求失败，响应内容: {}", error_text);
+        return Err(format!("Token 请求失败 ({}): {}", status, error_text));
+    }
+
+    let response_text = token_response.text().await.map_err(|e| {
+        println!("读取 token 响应失败: {}", e);
+        format!("读取 token 响应失败: {}", e)
+    })?;
+    
+    println!("Token 响应内容: {}", response_text);
+
+    let tokens: OAuthTokens = serde_json::from_str(&response_text)
+        .map_err(|e| {
+            println!("解析 token 响应失败: {}", e);
+            format!("解析 token 响应失败: {}", e)
+        })?;
+
+    println!("成功获取 token！");
+    Ok(tokens)
+}
+
+/// 刷新 Dropbox OAuth access token
+/// 注意：Dropbox 的 refresh token 流程可能需要特殊处理
+#[tauri::command]
+pub async fn refresh_dropbox_token(refresh_token: String) -> Result<OAuthTokens, String> {
+    let client = reqwest::Client::new();
+    let token_response = client
+        .post(DROPBOX_TOKEN_URL)
+        .basic_auth(DROPBOX_CLIENT_ID, Some(DROPBOX_CLIENT_SECRET))
+        .form(&[
+            ("grant_type", "refresh_token"),
+            ("refresh_token", refresh_token.as_str()),
+        ])
+        .send()
+        .await
+        .map_err(|e| format!("刷新 token 失败: {}", e))?;
+
+    if !token_response.status().is_success() {
+        let error_text = token_response.text().await.unwrap_or_default();
+        return Err(format!("刷新 token 失败: {}", error_text));
+    }
+
+    let tokens: OAuthTokens = token_response
+        .json()
+        .await
+        .map_err(|e| format!("解析 token 响应失败: {}", e))?;
+
+    Ok(tokens)
+}
+
+/// 撤销 Dropbox OAuth 授权
+#[tauri::command]
+pub async fn revoke_dropbox_token(token: String) -> Result<(), String> {
+    let client = reqwest::Client::new();
+    let response = client
+        .post("https://api.dropbox.com/2/auth/token/revoke")
+        .bearer_auth(&token)
+        .send()
+        .await
+        .map_err(|e| format!("撤销 token 失败: {}", e))?;
+
+    if !response.status().is_success() {
+        let error_text = response.text().await.unwrap_or_default();
+        return Err(format!("撤销 token 失败: {}", error_text));
+    }
+
+    Ok(())
+}
+
+/// 获取 Dropbox 用户信息
+#[tauri::command]
+pub async fn get_dropbox_user_info(access_token: String) -> Result<serde_json::Value, String> {
+    let client = reqwest::Client::new();
+    let response = client
+        .post("https://api.dropbox.com/2/users/get_current_account")
+        .bearer_auth(&access_token)
+        .send()
+        .await
+        .map_err(|e| format!("获取用户信息失败: {}", e))?;
+
+    if !response.status().is_success() {
+        let error_text = response.text().await.unwrap_or_default();
+        return Err(format!("获取用户信息失败: {}", error_text));
+    }
+
+    let user_info: serde_json::Value = response
+        .json()
+        .await
+        .map_err(|e| format!("解析用户信息失败: {}", e))?;
+
+    Ok(user_info)
+}
+
+/// 获取 Dropbox 存储配额信息
+#[tauri::command]
+pub async fn get_dropbox_quota(access_token: String) -> Result<serde_json::Value, String> {
+    let client = reqwest::Client::new();
+    let response = client
+        .post("https://api.dropbox.com/2/users/get_space_usage")
         .bearer_auth(&access_token)
         .send()
         .await

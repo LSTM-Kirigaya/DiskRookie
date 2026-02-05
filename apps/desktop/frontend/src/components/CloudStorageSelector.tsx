@@ -9,8 +9,9 @@ import {
   Typography,
   Checkbox,
   FormControlLabel,
+  Link,
 } from '@mui/material'
-import { Cloud, Check } from 'lucide-react'
+import { Cloud, Check, Settings } from 'lucide-react'
 import { CLOUD_STORAGE_PROVIDERS, type CloudStorageConfig } from '../services/settings'
 
 interface Props {
@@ -20,6 +21,7 @@ interface Props {
   availableConfigs: CloudStorageConfig[]
   fileName?: string
   preselectedConfigs?: CloudStorageConfig[]  // 预选中的配置
+  onOpenSettings?: () => void  // 打开设置对话框的回调
 }
 
 // 获取提供商图标
@@ -48,7 +50,7 @@ function ProviderIcon({ provider, size = 20 }: { provider: string; size?: number
   return <>{iconMap[provider] || <Cloud size={size} />}</>
 }
 
-export function CloudStorageSelector({ open, onClose, onConfirm, availableConfigs, fileName, preselectedConfigs }: Props) {
+export function CloudStorageSelector({ open, onClose, onConfirm, availableConfigs, fileName, preselectedConfigs, onOpenSettings }: Props) {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [selectAll, setSelectAll] = useState(false)
 
@@ -145,121 +147,167 @@ export function CloudStorageSelector({ open, onClose, onConfirm, availableConfig
             </Box>
           )}
 
-          {/* 全选选项 */}
-          <Box
-            sx={{
-              p: 1.5,
-              borderRadius: '10px',
-              border: '1px solid',
-              borderColor: selectAll ? 'primary.main' : 'divider',
-              bgcolor: selectAll ? 'primary.main' : 'transparent',
-              cursor: 'pointer',
-              transition: 'all 0.2s',
-              '&:hover': {
-                borderColor: 'primary.main',
-              },
-            }}
-            onClick={handleSelectAll}
-          >
-            <FormControlLabel
-              control={
-                <Checkbox
-                  checked={selectAll}
-                  onChange={handleSelectAll}
-                  sx={{
-                    color: selectAll ? '#1A1A1A' : 'inherit',
-                    '&.Mui-checked': {
-                      color: selectAll ? '#1A1A1A' : 'primary.main',
-                    },
+          {/* 如果没有可用的配置，显示提示和链接 */}
+          {availableConfigs.length === 0 ? (
+            <Box
+              sx={{
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                gap: 2,
+                py: 4,
+              }}
+            >
+              <Cloud size={48} className="text-gray-400" />
+              <Typography variant="body2" sx={{ color: 'text.secondary', textAlign: 'center' }}>
+                尚未配置云存储服务
+              </Typography>
+              {onOpenSettings && (
+                <Link
+                  component="button"
+                  onClick={() => {
+                    onClose()
+                    onOpenSettings()
                   }}
-                />
-              }
-              label={
-                <Typography
-                  variant="body2"
-                  sx={{
-                    fontWeight: 600,
-                    color: selectAll ? '#1A1A1A' : 'text.primary',
-                  }}
-                >
-                  全部迁移（{availableConfigs.length} 个云存储）
-                </Typography>
-              }
-            />
-          </Box>
-
-          {/* 云存储列表 */}
-          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-            {availableConfigs.map((config) => {
-              const configId = `${config.provider}-${config.name}`
-              const isSelected = selectedIds.has(configId)
-              const providerInfo = CLOUD_STORAGE_PROVIDERS.find(p => p.id === config.provider)
-
-              return (
-                <Box
-                  key={configId}
                   sx={{
                     display: 'flex',
                     alignItems: 'center',
-                    gap: 2,
-                    p: 1.5,
-                    borderRadius: '10px',
-                    border: '1px solid',
-                    borderColor: isSelected ? 'primary.main' : 'divider',
-                    bgcolor: isSelected ? 'primary.main' : 'transparent',
+                    gap: 1,
                     cursor: 'pointer',
-                    transition: 'all 0.2s',
+                    color: 'primary.main',
+                    textDecoration: 'none',
+                    fontSize: '14px',
+                    fontWeight: 600,
                     '&:hover': {
-                      borderColor: 'primary.main',
+                      textDecoration: 'underline',
                     },
                   }}
-                  onClick={() => handleToggle(config)}
+                  className="dark:!text-blue-400"
                 >
-                  <Checkbox
-                    checked={isSelected}
-                    sx={{
-                      color: isSelected ? '#1A1A1A' : 'inherit',
-                      '&.Mui-checked': {
-                        color: isSelected ? '#1A1A1A' : 'primary.main',
-                      },
-                    }}
-                  />
-                  
-                  <ProviderIcon provider={config.provider} size={24} />
-                  
-                  <Box sx={{ flex: 1 }}>
+                  <Settings size={16} />
+                  前往设置配置云存储
+                </Link>
+              )}
+            </Box>
+          ) : (
+            <>
+              {/* 全选选项 */}
+              <Box
+                sx={{
+                  p: 1.5,
+                  borderRadius: '10px',
+                  border: '1px solid',
+                  borderColor: selectAll ? 'primary.main' : 'divider',
+                  bgcolor: selectAll ? 'primary.main' : 'transparent',
+                  cursor: 'pointer',
+                  transition: 'all 0.2s',
+                  '&:hover': {
+                    borderColor: 'primary.main',
+                  },
+                }}
+                onClick={handleSelectAll}
+              >
+                <FormControlLabel
+                  control={
+                    <Checkbox
+                      checked={selectAll}
+                      onChange={handleSelectAll}
+                      sx={{
+                        color: selectAll ? '#1A1A1A' : 'inherit',
+                        '&.Mui-checked': {
+                          color: selectAll ? '#1A1A1A' : 'primary.main',
+                        },
+                      }}
+                    />
+                  }
+                  label={
                     <Typography
                       variant="body2"
                       sx={{
                         fontWeight: 600,
-                        color: isSelected ? '#1A1A1A' : 'text.primary',
+                        color: selectAll ? '#1A1A1A' : 'text.primary',
                       }}
                     >
-                      {config.name || providerInfo?.name}
+                      全部迁移（{availableConfigs.length} 个云存储）
                     </Typography>
-                    <Typography
-                      variant="caption"
+                  }
+                />
+              </Box>
+
+              {/* 云存储列表 */}
+              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                {availableConfigs.map((config) => {
+                  const configId = `${config.provider}-${config.name}`
+                  const isSelected = selectedIds.has(configId)
+                  const providerInfo = CLOUD_STORAGE_PROVIDERS.find(p => p.id === config.provider)
+
+                  return (
+                    <Box
+                      key={configId}
                       sx={{
-                        color: isSelected ? 'rgba(0,0,0,0.6)' : 'text.secondary',
-                        fontSize: '10px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 2,
+                        p: 1.5,
+                        borderRadius: '10px',
+                        border: '1px solid',
+                        borderColor: isSelected ? 'primary.main' : 'divider',
+                        bgcolor: isSelected ? 'primary.main' : 'transparent',
+                        cursor: 'pointer',
+                        transition: 'all 0.2s',
+                        '&:hover': {
+                          borderColor: 'primary.main',
+                        },
                       }}
+                      onClick={() => handleToggle(config)}
                     >
-                      {config.targetFolder || '/'}
-                    </Typography>
-                  </Box>
+                      <Checkbox
+                        checked={isSelected}
+                        sx={{
+                          color: isSelected ? '#1A1A1A' : 'inherit',
+                          '&.Mui-checked': {
+                            color: isSelected ? '#1A1A1A' : 'primary.main',
+                          },
+                        }}
+                      />
+                      
+                      <ProviderIcon provider={config.provider} size={24} />
+                      
+                      <Box sx={{ flex: 1 }}>
+                        <Typography
+                          variant="body2"
+                          sx={{
+                            fontWeight: 600,
+                            color: isSelected ? '#1A1A1A' : 'text.primary',
+                          }}
+                        >
+                          {config.name || providerInfo?.name}
+                        </Typography>
+                        <Typography
+                          variant="caption"
+                          sx={{
+                            color: isSelected ? 'rgba(0,0,0,0.6)' : 'text.secondary',
+                            fontSize: '10px',
+                          }}
+                        >
+                          {config.targetFolder || '/'}
+                        </Typography>
+                      </Box>
 
-                  {isSelected && (
-                    <Check size={18} style={{ color: '#1A1A1A' }} />
-                  )}
-                </Box>
-              )
-            })}
-          </Box>
+                      {isSelected && (
+                        <Check size={18} style={{ color: '#1A1A1A' }} />
+                      )}
+                    </Box>
+                  )
+                })}
+              </Box>
 
-          {/* 提示信息 */}
-          <Typography variant="caption" sx={{ color: 'text.secondary', fontSize: '11px', textAlign: 'center' }}>
-            文件将同时上传到所有选中的云存储
-          </Typography>
+              {/* 提示信息 */}
+              <Typography variant="caption" sx={{ color: 'text.secondary', fontSize: '11px', textAlign: 'center' }}>
+                文件将同时上传到所有选中的云存储
+              </Typography>
+            </>
+          )}
         </Box>
       </DialogContent>
 
@@ -281,7 +329,7 @@ export function CloudStorageSelector({ open, onClose, onConfirm, availableConfig
         </Button>
         <Button
           onClick={handleConfirm}
-          disabled={selectedIds.size === 0}
+          disabled={selectedIds.size === 0 || availableConfigs.length === 0}
           variant="contained"
           size="small"
           sx={{

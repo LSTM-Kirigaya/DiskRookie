@@ -24,6 +24,11 @@ export interface Task {
   completedAt?: number
   deleteSource?: boolean // 上传成功后是否删除源文件
   sourceDeleted?: boolean // 源文件是否已被删除
+  // 上传进度相关
+  uploadedBytes?: number // 已上传字节数
+  uploadSpeed?: number // 上传速度 (bytes/s)
+  lastProgressTime?: number // 上次进度更新时间
+  lastUploadedBytes?: number // 上次已上传字节数
 }
 
 // 创建唯一ID

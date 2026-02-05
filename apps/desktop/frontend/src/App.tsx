@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { open } from '@tauri-apps/plugin-shell'
 import { invoke } from '@tauri-apps/api/core'
+import { listen } from '@tauri-apps/api/event'
 import { Settings, Github, Mail, ExternalLink, Sun, Moon, Monitor, Minus, Copy, X, ListTodo } from 'lucide-react'
 import { ThemeProvider, createTheme, CssBaseline, IconButton, Box, Tooltip, Menu, MenuItem, ListItemIcon, ListItemText, Button, Badge } from '@mui/material'
 import { ExpertMode } from './components/ExpertMode'
@@ -10,9 +11,18 @@ import { SnapshotDialog } from './components/SnapshotDialog'
 import { TaskQueueDialog } from './components/TaskQueueDialog'
 import type { Snapshot } from './services/snapshot'
 import { readStorageFile, writeStorageFile } from './services/storage'
-import { type Task, createMigrateTask, formatFileSize } from './services/taskQueue'
+import { type Task, createMigrateTask } from './services/taskQueue'
 import type { CloudStorageConfig } from './services/settings'
 import { notifyMigrateSuccess, notifyMigrateFailed } from './services/notification'
+
+// 上传进度事件类型
+interface UploadProgressEvent {
+  task_id: string
+  provider: string
+  progress: number
+  uploaded_bytes: number
+  total_bytes: number
+}
 
 const THEME_STORAGE_FILE = 'theme.txt'
 
@@ -91,6 +101,44 @@ function App() {
     setIsPaused(false)
   }, [])
 
+  // 监听上传进度事件
+  useEffect(() => {
+    const unlisten = listen<UploadProgressEvent>('upload-progress', (event) => {
+      const { task_id, progress, uploaded_bytes } = event.payload
+      const now = Date.now()
+      
+      // 更新对应任务的进度，并计算上传速度
+      setTasks(prev => prev.map(t => {
+        if (t.id !== task_id) return t
+        
+        // 计算上传速度
+        let uploadSpeed = t.uploadSpeed || 0
+        if (t.lastProgressTime && t.lastUploadedBytes !== undefined) {
+          const timeDiff = (now - t.lastProgressTime) / 1000 // 秒
+          const bytesDiff = uploaded_bytes - t.lastUploadedBytes
+          if (timeDiff > 0 && bytesDiff > 0) {
+            // 使用移动平均来平滑速度显示
+            const newSpeed = bytesDiff / timeDiff
+            uploadSpeed = uploadSpeed > 0 ? uploadSpeed * 0.3 + newSpeed * 0.7 : newSpeed
+          }
+        }
+        
+        return {
+          ...t,
+          progress,
+          uploadedBytes: uploaded_bytes,
+          uploadSpeed,
+          lastProgressTime: now,
+          lastUploadedBytes: uploaded_bytes,
+        }
+      }))
+    })
+
+    return () => {
+      unlisten.then(fn => fn())
+    }
+  }, [])
+
   // 处理队列中的任务
   useEffect(() => {
     const processNextTask = async () => {
@@ -105,7 +153,7 @@ function App() {
       abortControllersRef.current.set(taskId, abortController)
 
       // 开始上传
-      updateTask(taskId, { status: 'uploading', startedAt: Date.now() })
+      updateTask(taskId, { status: 'uploading', startedAt: Date.now(), progress: 0 })
 
       try {
         const config = pendingTask.targetConfigs[0]
@@ -130,18 +178,6 @@ function App() {
           }
         }
 
-        // 模拟进度（因为实际 API 可能不支持进度回调）
-        let progress = 0
-        let isCompleted = false  // 标志：防止上传完成后 interval 继续更新进度
-        const progressInterval = setInterval(() => {
-          if (abortController.signal.aborted || isCompleted) {
-            clearInterval(progressInterval)
-            return
-          }
-          progress = Math.min(progress + Math.random() * 15, 90)
-          updateTask(taskId, { progress: Math.floor(progress) })
-        }, 500)
-
         // 准备上传配置
         const uploadConfigs = [{
           provider: config.provider,
@@ -150,7 +186,7 @@ function App() {
           target_path: pendingTask.targetPath,
         }]
 
-        // 调用 Tauri 后端上传（传递是否删除源文件的参数）
+        // 调用 Tauri 后端上传（传递是否删除源文件的参数和任务ID用于进度回调）
         interface UploadResult {
           success: boolean
           provider: string
@@ -163,11 +199,8 @@ function App() {
           filePath: pendingTask.sourcePath,
           configs: uploadConfigs,
           deleteSource: pendingTask.deleteSource ?? true,  // 默认删除源文件
+          taskId: taskId,  // 传递任务ID用于进度事件关联
         })
-
-        // 标记为已完成，防止 interval 继续更新
-        isCompleted = true
-        clearInterval(progressInterval)
         
         if (!abortController.signal.aborted) {
           // 检查是否所有上传都成功

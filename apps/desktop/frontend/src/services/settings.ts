@@ -23,6 +23,39 @@ export interface GoogleUserInfo {
   picture?: string
 }
 
+// 百度网盘用户信息
+export interface BaiduUserInfo {
+  openid: string
+  unionid?: string
+  username?: string
+  portrait?: string
+  userdetail?: string
+  birthday?: string
+  sex?: string
+}
+
+// 阿里云盘用户信息
+export interface AliyunUserInfo {
+  user_id?: string
+  user_name?: string
+  nick_name?: string
+  avatar?: string
+  phone?: string
+  email?: string
+}
+
+// Dropbox 用户信息
+export interface DropboxUserInfo {
+  account_id: string
+  name: {
+    given_name: string
+    surname: string
+    display_name: string
+  }
+  email: string
+  profile_photo_url?: string
+}
+
 // 云存储服务类型
 export type CloudStorageProvider = 
   | 'google_drive'
@@ -230,6 +263,113 @@ export async function getGoogleDriveQuota(accessToken: string): Promise<GoogleDr
   return await invoke<GoogleDriveQuota>('get_google_drive_quota', { accessToken })
 }
 
+// ===== 百度网盘 OAuth 相关函数 =====
+
+// 启动百度网盘 OAuth 授权流程（打开浏览器并等待回调）
+export async function startBaiduOAuth(): Promise<OAuthTokens> {
+  return await invoke<OAuthTokens>('complete_baidu_oauth')
+}
+
+// 刷新百度网盘 OAuth access token
+export async function refreshBaiduToken(refreshToken: string): Promise<OAuthTokens> {
+  return await invoke<OAuthTokens>('refresh_baidu_token', { refreshToken })
+}
+
+// 撤销百度网盘 OAuth 授权
+export async function revokeBaiduToken(token: string): Promise<void> {
+  return await invoke('revoke_baidu_token', { token })
+}
+
+// 获取百度网盘用户信息
+export async function getBaiduUserInfo(accessToken: string): Promise<BaiduUserInfo> {
+  const userInfo = await invoke<BaiduUserInfo>('get_baidu_user_info', { accessToken })
+  return userInfo
+}
+
+// 百度网盘存储配额信息
+export interface BaiduNetdiskQuota {
+  total?: number      // 总容量（字节）
+  used?: number      // 已使用（字节）
+  free?: number      // 剩余容量（字节）
+}
+
+// 获取百度网盘存储配额
+export async function getBaiduNetdiskQuota(accessToken: string): Promise<BaiduNetdiskQuota> {
+  return await invoke<BaiduNetdiskQuota>('get_baidu_netdisk_quota', { accessToken })
+}
+
+// ===== 阿里云盘 OAuth 相关函数 =====
+
+// 启动阿里云盘 OAuth 授权流程（打开浏览器并等待回调）
+export async function startAliyunOAuth(): Promise<OAuthTokens> {
+  return await invoke<OAuthTokens>('complete_aliyun_oauth')
+}
+
+// 刷新阿里云盘 OAuth access token
+export async function refreshAliyunToken(refreshToken: string): Promise<OAuthTokens> {
+  return await invoke<OAuthTokens>('refresh_aliyun_token', { refreshToken })
+}
+
+// 撤销阿里云盘 OAuth 授权
+export async function revokeAliyunToken(token: string): Promise<void> {
+  return await invoke('revoke_aliyun_token', { token })
+}
+
+// 获取阿里云盘用户信息
+export async function getAliyunUserInfo(accessToken: string): Promise<AliyunUserInfo> {
+  const userInfo = await invoke<AliyunUserInfo>('get_aliyun_user_info', { accessToken })
+  return userInfo
+}
+
+// 阿里云盘存储配额信息
+export interface AliyunDriveQuota {
+  total_size?: number      // 总容量（字节）
+  used_size?: number      // 已使用（字节）
+  available_size?: number  // 剩余容量（字节）
+}
+
+// 获取阿里云盘存储配额
+export async function getAliyunDriveQuota(accessToken: string): Promise<AliyunDriveQuota> {
+  return await invoke<AliyunDriveQuota>('get_aliyun_drive_quota', { accessToken })
+}
+
+// ===== Dropbox OAuth 相关函数 =====
+
+// 启动 Dropbox OAuth 授权流程（打开浏览器并等待回调）
+export async function startDropboxOAuth(): Promise<OAuthTokens> {
+  return await invoke<OAuthTokens>('complete_dropbox_oauth')
+}
+
+// 刷新 Dropbox OAuth access token
+export async function refreshDropboxToken(refreshToken: string): Promise<OAuthTokens> {
+  return await invoke<OAuthTokens>('refresh_dropbox_token', { refreshToken })
+}
+
+// 撤销 Dropbox OAuth 授权
+export async function revokeDropboxToken(token: string): Promise<void> {
+  return await invoke('revoke_dropbox_token', { token })
+}
+
+// 获取 Dropbox 用户信息
+export async function getDropboxUserInfo(accessToken: string): Promise<DropboxUserInfo> {
+  const userInfo = await invoke<DropboxUserInfo>('get_dropbox_user_info', { accessToken })
+  return userInfo
+}
+
+// Dropbox 存储配额信息
+export interface DropboxQuota {
+  used: number      // 已使用（字节）
+  allocation: {
+    '.tag': string
+    allocated?: number  // 总容量（字节）
+  }
+}
+
+// 获取 Dropbox 存储配额
+export async function getDropboxQuota(accessToken: string): Promise<DropboxQuota> {
+  return await invoke<DropboxQuota>('get_dropbox_quota', { accessToken })
+}
+
 // 检查并刷新 token（如果快过期）
 export async function ensureValidToken(config: CloudStorageConfig): Promise<CloudStorageConfig> {
   if (!config.accessToken || !config.tokenExpiry) {
@@ -245,7 +385,19 @@ export async function ensureValidToken(config: CloudStorageConfig): Promise<Clou
       throw new Error('Token 已过期且没有 refresh token')
     }
     
-    const tokens = await refreshGoogleToken(config.refreshToken)
+    // 根据提供商选择不同的刷新函数
+    let tokens: OAuthTokens
+    if (config.provider === 'baidu_netdisk') {
+      tokens = await refreshBaiduToken(config.refreshToken)
+    } else if (config.provider === 'aliyun_drive') {
+      tokens = await refreshAliyunToken(config.refreshToken)
+    } else if (config.provider === 'dropbox') {
+      tokens = await refreshDropboxToken(config.refreshToken)
+    } else {
+      // 默认使用 Google（或其他已实现的提供商）
+      tokens = await refreshGoogleToken(config.refreshToken)
+    }
+    
     return {
       ...config,
       accessToken: tokens.access_token,
