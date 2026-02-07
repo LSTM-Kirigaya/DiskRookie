@@ -257,7 +257,11 @@
     "promptFileCountHint": "控制发送给 AI 的文件列表数量（更多文件会消耗更多 Token）",
     "resetDefault": "重置为默认",
     "saveSettings": "保存设置",
-    "saveFailed": "保存设置失败"
+    "saveFailed": "保存设置失败",
+    "testConnection": "测试连接",
+    "testConnectionTesting": "测试中…",
+    "testConnectionSuccess": "大模型连接成功",
+    "testConnectionFailed": "大模型连接失败"
   },
   "errors": {
     "noValidConfig": "未找到有效的云存储配置",

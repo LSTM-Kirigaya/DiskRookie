@@ -258,7 +258,11 @@
     "promptFileCountHint": "AIに送信するファイル数を制御（ファイルが多いほどトークンを消費）",
     "resetDefault": "デフォルトにリセット",
     "saveSettings": "設定を保存",
-    "saveFailed": "設定の保存に失敗しました"
+    "saveFailed": "設定の保存に失敗しました",
+    "testConnection": "接続をテスト",
+    "testConnectionTesting": "テスト中…",
+    "testConnectionSuccess": "大規模言語モデル接続成功",
+    "testConnectionFailed": "大規模言語モデル接続失敗"
   },
   "errors": {
     "noValidConfig": "有効なクラウドストレージ設定が見つかりません",

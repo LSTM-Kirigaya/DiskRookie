@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
-import { X, Eye, EyeOff, Check, AlertCircle, ChevronDown, ChevronUp, Brain, Cloud, Settings } from 'lucide-react'
+import { X, Eye, EyeOff, Check, AlertCircle, ChevronDown, ChevronUp, Brain, Cloud, Settings, Wifi } from 'lucide-react'
 import { showNotification } from '../services/notification'
 import {
   TextField,
@@ -28,6 +28,7 @@ import {
   MODEL_PRESETS,
   API_URL_PRESETS,
   fetchAvailableModels,
+  testConnection,
   type AISettings as AISettingsType,
   type ModelInfo,
 } from '../services/ai'
@@ -85,6 +86,8 @@ export function AISettings({ onClose, initialTab = 0, onSaved, themePreference: 
   const [customModel, setCustomModel] = useState('')
   const [availableModels, setAvailableModels] = useState<ModelInfo[]>([])
   const [loadingModels, setLoadingModels] = useState(false)
+  const [testingConnection, setTestingConnection] = useState(false)
+  const [testResult, setTestResult] = useState<{ ok: boolean; message: string } | null>(null)
   const [advancedExpanded, setAdvancedExpanded] = useState(false)
   const [activeTab, setActiveTab] = useState(initialTab)
   
@@ -345,6 +348,47 @@ export function AISettings({ onClose, initialTab = 0, onSaved, themePreference: 
                   <AlertCircle className="w-3 h-3" />
                   {t('settings.apiKeyHint')}
                 </FormHelperText>
+                {/* 测试连接 - 填写了 API Key、地址和模型后显示，响应信息显示在按钮右侧 */}
+                {settings.apiKey && settings.apiUrl && settings.model && (
+                  <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1.5, mt: 0.5, flexWrap: 'wrap' }}>
+                    <Button
+                      variant="outlined"
+                      size="small"
+                      startIcon={testingConnection ? <CircularProgress size={16} /> : <Wifi className="w-4 h-4" />}
+                      onClick={async () => {
+                        setTestResult(null)
+                        setTestingConnection(true)
+                        try {
+                          const result = await testConnection(settings)
+                          setTestResult(result)
+                          if (!result.ok) {
+                            showNotification(t('settings.testConnectionFailed'), result.message)
+                          }
+                        } finally {
+                          setTestingConnection(false)
+                        }
+                      }}
+                      disabled={testingConnection}
+                    >
+                      {testingConnection ? t('settings.testConnectionTesting') : t('settings.testConnection')}
+                    </Button>
+                    {testResult != null && (
+                      <Typography
+                        component="span"
+                        variant="body2"
+                        sx={{
+                          flex: '1 1 200px',
+                          minWidth: 0,
+                          color: testResult.ok ? 'success.main' : 'error.main',
+                          fontSize: '12px',
+                          alignSelf: 'center',
+                        }}
+                      >
+                        {testResult.message}
+                      </Typography>
+                    )}
+                  </Box>
+                )}
               </Box>
 
               {/* 模型选择 - 只有填写了 API Key 才显示 */}

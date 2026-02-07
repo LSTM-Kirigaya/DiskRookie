@@ -243,6 +243,34 @@ export async function fetchAvailableModels(apiUrl: string, apiKey: string): Prom
   }
 }
 
+/** 测试大模型连接：发送 Hello 并检查响应是否合理 */
+export async function testConnection(settings: AISettings): Promise<{ ok: boolean; message: string }> {
+  if (!settings.apiKey?.trim()) {
+    return { ok: false, message: '请先填写 API Key' }
+  }
+  if (!settings.apiUrl?.trim()) {
+    return { ok: false, message: '请先填写 API 地址' }
+  }
+  if (!settings.model?.trim()) {
+    return { ok: false, message: '请先选择或填写模型' }
+  }
+
+  try {
+    const reply = await sendChatRequest(
+      [{ role: 'user', content: 'Hello' }],
+      settings
+    )
+    const trimmed = (reply || '').trim()
+    if (!trimmed) {
+      return { ok: false, message: '模型返回了空响应，请检查模型与 API 配置' }
+    }
+    return { ok: true, message: trimmed }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err)
+    return { ok: false, message }
+  }
+}
+
 // 系统提示词
 export const SYSTEM_PROMPT = `你是一个专业的磁盘分析和文件管理助手。你可以帮助用户：
 

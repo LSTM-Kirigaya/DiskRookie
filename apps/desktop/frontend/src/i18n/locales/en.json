@@ -257,7 +257,11 @@
     "promptFileCountHint": "Control the number of files sent to AI (more files consume more tokens)",
     "resetDefault": "Reset to Default",
     "saveSettings": "Save Settings",
-    "saveFailed": "Failed to save settings"
+    "saveFailed": "Failed to save settings",
+    "testConnection": "Test Connection",
+    "testConnectionTesting": "Testing…",
+    "testConnectionSuccess": "LLM connection successful",
+    "testConnectionFailed": "LLM connection failed"
   },
   "errors": {
     "noValidConfig": "No valid cloud storage configuration found",
