@@ -53,7 +53,7 @@
 
 欢迎加入我们的 QQ 群，一起讨论 DiskRookie 的使用和开发！
 
-<a target="_blank" href="https://qm.qq.com/cgi-bin/qm/qr?k=m_GRedABaOwTCseJQnKi_sjMlS_cIhtx&jump_from=webapi&authKey=BQn3melqNkir6iplZgohsxxyJ+FkR81CjCI5XXXEz/piAq0bDcI9W58VmBHx5o3p"><img border="0" src="//pub.idqqimg.com/wpa/images/group.png" alt="DiskRookie 磁盘菜鸟" title="DiskRookie 磁盘菜鸟"></a>
+<a target="_blank" href="https://qm.qq.com/cgi-bin/qm/qr?k=m_GRedABaOwTCseJQnKi_sjMlS_cIhtx&jump_from=webapi&authKey=BQn3melqNkir6iplZgohsxxyJ+FkR81CjCI5XXXEz/piAq0bDcI9W58VmBHx5o3p"><img border="0" src="https://pub.idqqimg.com/wpa/images/group.png" alt="DiskRookie 磁盘菜鸟" title="DiskRookie 磁盘菜鸟"></a>
 
 ---
 
