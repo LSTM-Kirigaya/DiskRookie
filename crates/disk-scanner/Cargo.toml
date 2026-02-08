@@ -8,5 +8,12 @@ ai-disk-common = { path = "../common" }
 ai-disk-domain = { path = "../domain-model" }
 rayon = "1"
 
+[target.'cfg(windows)'.dependencies]
+ntfs-reader = { path = "../ntfs-reader" }
+windows-sys = { version = "0.52", features = ["Win32_Foundation", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_IO", "Win32_System_Ioctl"] }
+
 [dev-dependencies]
 tempfile = "3"
+
+[target.'cfg(windows)'.dev-dependencies]
+ntfs-reader = { path = "../ntfs-reader" }

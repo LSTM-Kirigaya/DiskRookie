@@ -10,10 +10,12 @@ import {
   IconButton,
   InputAdornment,
   FormControl,
+  FormControlLabel,
   FormHelperText,
   Box,
   Typography,
   Slider,
+  Switch,
   Accordion,
   AccordionSummary,
   AccordionDetails,
@@ -80,7 +82,7 @@ const THEME_STORAGE_FILE = 'theme.txt'
 export function AISettings({ onClose, initialTab = 0, onSaved, themePreference: externalThemePreference, onThemeChange, currentLanguage: externalCurrentLanguage, onLanguageChange }: Props) {
   const { t, i18n } = useTranslation()
   const [settings, setSettings] = useState<AISettingsType>(DEFAULT_SETTINGS)
-  const [appSettings, setAppSettings] = useState<AppSettings>({ promptFileCount: 100 })
+  const [appSettings, setAppSettings] = useState<AppSettings>({ promptFileCount: 100, useMftScan: true })
   const [showApiKey, setShowApiKey] = useState(false)
   const [saved, setSaved] = useState(false)
   const [customUrl, setCustomUrl] = useState('')
@@ -619,6 +621,27 @@ export function AISettings({ onClose, initialTab = 0, onSaved, themePreference: 
                   </Select>
                 </FormControl>
               </Box>
+
+              {/* MFT 加速扫描（仅 Windows 磁盘根路径有效） */}
+              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                <FormControlLabel
+                  control={
+                    <Switch
+                      checked={appSettings.useMftScan !== false}
+                      onChange={async (_, checked) => {
+                        const next = { ...appSettings, useMftScan: checked }
+                        setAppSettings(next)
+                        await saveAppSettings(next)
+                      }}
+                      size="small"
+                    />
+                  }
+                  label={t('settings.useMftScan')}
+                />
+                <FormHelperText sx={{ mt: -0.5, ml: 0 }}>
+                  {t('settings.useMftScanHint')}
+                </FormHelperText>
+              </Box>
             </Box>
           </TabPanel>
         </div>
@@ -629,7 +652,7 @@ export function AISettings({ onClose, initialTab = 0, onSaved, themePreference: 
             <Button
               onClick={() => {
                 setSettings(DEFAULT_SETTINGS)
-                setAppSettings({ promptFileCount: 100 })
+                setAppSettings({ promptFileCount: 100, useMftScan: true })
                 setCustomUrl('')
                 setCustomModel('')
               }}

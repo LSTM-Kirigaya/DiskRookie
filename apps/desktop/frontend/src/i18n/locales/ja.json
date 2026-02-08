@@ -69,11 +69,14 @@
     "processTime": "処理時間",
     "totalFiles": "ファイル総数",
     "diskUsage": "使用容量",
+    "volumeCapacity": "ボリューム容量",
     "processedFiles": "処理済みファイルオブジェクト",
     "errorOccurred": "エラーが発生しました",
     "needApiConfig": "標準モードには先にAPI設定が必要です。",
     "diskView": "ディスク表示",
-    "aiInstructions": "AI指示"
+    "aiInstructions": "AI指示",
+    "mftHintWhenDiskRoot": "現在はボリュームルートです。MFT 有効時は MFT フルスキャンで加速（管理者権限が必要）",
+    "scanHasError": "このディスクのスキャンでエラーが発生しました（通常スキャンで続行）"
   },
   "aiAnalysis": {
     "preparing": "AI分析を準備中...",
@@ -262,7 +265,9 @@
     "testConnection": "接続をテスト",
     "testConnectionTesting": "テスト中…",
     "testConnectionSuccess": "大規模言語モデル接続成功",
-    "testConnectionFailed": "大規模言語モデル接続失敗"
+    "testConnectionFailed": "大規模言語モデル接続失敗",
+    "useMftScan": "ディスクルートでMFTでスキャン加速",
+    "useMftScanHint": "有効時、WindowsでC:\\、D:\\などのボリュームルートをNTFS MFTでスキャン"
   },
   "errors": {
     "noValidConfig": "有効なクラウドストレージ設定が見つかりません",

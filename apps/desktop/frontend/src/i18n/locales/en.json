@@ -69,11 +69,14 @@
     "processTime": "Process Time",
     "totalFiles": "Total Files",
     "diskUsage": "Disk Usage",
+    "volumeCapacity": "Volume capacity",
     "processedFiles": "Processed file objects",
     "errorOccurred": "An error occurred",
     "needApiConfig": "Standard mode requires API configuration first.",
     "diskView": "Disk View",
-    "aiInstructions": "AI Instructions"
+    "aiInstructions": "AI Instructions",
+    "mftHintWhenDiskRoot": "Current path is a volume root; with MFT enabled, full MFT scan will be used (admin required)",
+    "scanHasError": "This disk scan had an error (continued with normal scan)"
   },
   "aiAnalysis": {
     "preparing": "Preparing AI analysis...",
@@ -261,7 +264,9 @@
     "testConnection": "Test Connection",
     "testConnectionTesting": "Testing…",
     "testConnectionSuccess": "LLM connection successful",
-    "testConnectionFailed": "LLM connection failed"
+    "testConnectionFailed": "LLM connection failed",
+    "useMftScan": "Use MFT to speed up disk root scan",
+    "useMftScanHint": "When enabled, use NTFS MFT for volume roots (e.g. C:\\, D:\\) on Windows"
   },
   "errors": {
     "noValidConfig": "No valid cloud storage configuration found",

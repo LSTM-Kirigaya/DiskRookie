@@ -63,7 +63,7 @@ export const DEFAULT_SETTINGS: AISettings = {
   apiKey: '',
   providerApiKeys: {},
   model: 'gpt-4o-mini',
-  temperature: 0.7,
+  temperature: 0,
   maxTokens: 2048,
 }
 

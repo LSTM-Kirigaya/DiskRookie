@@ -4,6 +4,8 @@ import { invoke } from '@tauri-apps/api/core'
 
 export interface AppSettings {
   promptFileCount: number  // AI Prompt 中显示的文件数量
+  /** 磁盘根路径（如 C:\、D:\）使用 MFT 加速扫描（仅 Windows NTFS 有效），默认开启 */
+  useMftScan?: boolean
 }
 
 // OAuth Token 响应
@@ -173,6 +175,7 @@ const CLOUD_STORAGE_SETTINGS_FILE = 'cloud-storage-settings.json'
 
 export const DEFAULT_APP_SETTINGS: AppSettings = {
   promptFileCount: 100,
+  useMftScan: true,
 }
 
 export const DEFAULT_CLOUD_STORAGE_SETTINGS: CloudStorageSettings = {
@@ -180,9 +183,10 @@ export const DEFAULT_CLOUD_STORAGE_SETTINGS: CloudStorageSettings = {
   defaultProvider: undefined,
 }
 
-// 加载设置
+// 加载设置（与默认值合并，确保 useMftScan 等新字段始终有值）
 export async function loadAppSettings(): Promise<AppSettings> {
-  return await readJSON<AppSettings>(SETTINGS_FILE, DEFAULT_APP_SETTINGS)
+  const loaded = await readJSON<Partial<AppSettings>>(SETTINGS_FILE, {})
+  return { ...DEFAULT_APP_SETTINGS, ...loaded }
 }
 
 // 保存设置

@@ -23,9 +23,29 @@ interface ScanResult {
     scan_time_ms: number
     file_count: number
     total_size: number
+    /** 当 MFT 扫描失败并回退到普通扫描时，后端会设置此字段，前端用于标注「此磁盘的扫描有错误」 */
+    scan_warning?: string | null
+    /** 卷总容量（字节），由操作系统 API 获取 */
+    volume_total_bytes?: number | null
+    /** 卷剩余可用空间（字节） */
+    volume_free_bytes?: number | null
 }
 
 const PROMPT_INSTRUCTION_FILE = 'prompt-instruction.txt'
+
+/** Windows 下将 "C:" 规范为 "C:\"，便于后端识别为卷根并走 MFT 全量扫描 */
+function normalizeScanPath(p: string): string {
+  const s = p.trim().replace(/\//g, '\\')
+  if (/^[A-Za-z]:$/.test(s)) return s + '\\'
+  return s
+}
+
+/** 当前路径是否为 Windows 磁盘根（如 C:\），用于提示是否将走 MFT */
+function isWindowsVolumeRoot(p: string): boolean {
+  const s = p.trim().replace(/\//g, '\\')
+  const normalized = /^[A-Za-z]:$/.test(s) ? s + '\\' : s
+  return /^[A-Za-z]:\\$/.test(normalized)
+}
 const DEFAULT_PROMPT_INSTRUCTION = '请根据以上占用，简要指出可安全清理或迁移的大项，并给出操作建议。'
 const FILE_COUNT_FILE = 'prompt-file-count.txt'
 const DEFAULT_FILE_COUNT = 100
@@ -316,6 +336,7 @@ export function ExpertMode({ onOpenSettings, loadedSnapshot, onSnapshotLoaded, s
     const [isAdmin, setIsAdmin] = useState<boolean | null>(false)
     const [hoverNode, setHoverNode] = useState<TreemapNode | null>(null)
     const [progressFiles, setProgressFiles] = useState(0)
+    const [progressMessage, setProgressMessage] = useState('')
     const [viewMode, setViewMode] = useState<'disk' | 'ai-prompt'>('disk')
     const [shallowDirs, setShallowDirs] = useState(true)
     const openedSettingsForStandardRef = useRef(false)
@@ -342,19 +363,35 @@ export function ExpertMode({ onOpenSettings, loadedSnapshot, onSnapshotLoaded, s
     const [migrationTargetNames, setMigrationTargetNames] = useState<string>('')
 
     useEffect(() => {
-        let unlisten: (() => void) | undefined
-        getCurrentWindow().listen<[number, string]>('scan-progress', (ev) => setProgressFiles(ev.payload[0]))
-            .then((fn) => { unlisten = fn })
+        let unlistenProgress: (() => void) | undefined
+        let unlistenMftStatus: (() => void) | undefined
+        getCurrentWindow().listen<[number, string]>('scan-progress', (ev) => {
+            setProgressFiles(ev.payload[0])
+            if (ev.payload[1]) setProgressMessage(ev.payload[1])
+        })
+            .then((fn) => { unlistenProgress = fn })
+        getCurrentWindow().listen<[string, boolean]>('scan-mft-status', (ev) => {
+            const [path, usedMft] = ev.payload
+            if (usedMft) {
+                console.log('[DiskRookie] 本次扫描已成功使用 MFT 技术，路径:', path)
+            } else {
+                console.log('[DiskRookie] 本次扫描未使用 MFT（普通目录遍历），路径:', path)
+            }
+        }).then((fn) => { unlistenMftStatus = fn })
         return () => {
-            unlisten?.()
+            unlistenProgress?.()
+            unlistenMftStatus?.()
         }
     }, [])
 
     const runScan = useCallback(async (targetPath: string) => {
         if (!targetPath) return
-        setStatus('scanning'); setErrorMsg(''); setResult(null); setProgressFiles(0); setAnalysisResult(null); setActionFilter('all'); setActionOverrides(new Map());
+        const pathToScan = normalizeScanPath(targetPath)
+        setStatus('scanning'); setErrorMsg(''); setResult(null); setProgressFiles(0); setProgressMessage(''); setAnalysisResult(null); setActionFilter('all'); setActionOverrides(new Map());
         try {
-            const res = await invoke<ScanResult>('scan_path_command', { path: targetPath, shallow_dirs: shallowDirs })
+            const appSettings = await loadAppSettings()
+            const useMft = appSettings.useMftScan !== false
+            const res = await invoke<ScanResult>('scan_path_command', { path: pathToScan, shallowDirs, useMft })
             setResult(res); setStatus('done');
 
             // 标准模式：扫描完成后自动调用 AI 分析
@@ -864,11 +901,20 @@ export function ExpertMode({ onOpenSettings, loadedSnapshot, onSnapshotLoaded, s
                         const stats = [
                             { label: t('expertMode.processTime'), val: formatDuration(result.scan_time_ms), Icon: Clock },
                             { label: t('expertMode.totalFiles'), val: result.file_count.toLocaleString(), Icon: FileStack },
-                            { label: t('expertMode.diskUsage'), val: formatBytes(result.total_size), Icon: HardDrive }
+                            { label: t('expertMode.diskUsage'), val: formatBytes(result.total_size), Icon: HardDrive },
+                            ...(result.volume_total_bytes != null && result.volume_total_bytes > 0
+                                ? [{ label: t('expertMode.volumeCapacity'), val: formatBytes(result.volume_total_bytes), Icon: HardDrive }]
+                                : [])
                         ]
                         const tooltipTitle = stats.map(({ label, val }) => `${label}: ${val}`).join(' · ')
                         return (
-                            <div className="flex items-center gap-2">
+                            <div className="flex flex-col items-end gap-1">
+                                {result.scan_warning && (
+                                    <span className="text-amber-600 dark:text-amber-400 text-xs font-medium" title={result.scan_warning}>
+                                        {t('expertMode.scanHasError')}
+                                    </span>
+                                )}
+                                <div className="flex items-center gap-2">
                                 {/* 一键全选/取消全选按钮 */}
                                 {analysisResult && (() => {
                                     const visibleItems = analysisResult.suggestions
@@ -938,6 +984,7 @@ export function ExpertMode({ onOpenSettings, loadedSnapshot, onSnapshotLoaded, s
                                         ))}
                                     </div>
                                 </Tooltip>
+                                </div>
                             </div>
                         )
                     })()}
@@ -977,6 +1024,9 @@ export function ExpertMode({ onOpenSettings, loadedSnapshot, onSnapshotLoaded, s
                     <div className="text-center">
                         <Typography variant="h4" sx={{ fontWeight: 900, color: 'secondary.main' }}>{progressFiles.toLocaleString()}</Typography>
                         <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 700, letterSpacing: 2 }}>{t('expertMode.processedFiles')}</Typography>
+                        {progressMessage && (
+                            <Typography variant="caption" display="block" sx={{ color: 'primary.main', mt: 1, fontFamily: 'monospace' }}>{progressMessage}</Typography>
+                        )}
                     </div>
                     <div className="flex gap-1 h-2">
                         {Array.from({ length: 12 }).map((_, i) => (

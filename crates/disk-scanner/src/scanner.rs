@@ -9,8 +9,23 @@ use rayon::prelude::*;
 const MAX_DEPTH: usize = 10;
 const MAX_CHILDREN_PER_DIR: usize = 500;
 
+/// Windows: 文件或目录损坏且无法读取，遇到时跳过该路径继续扫描
+#[cfg(windows)]
+fn is_corruption_io_error(e: &std::io::Error) -> bool {
+    match e.raw_os_error() {
+        Some(1392) => true, // ERROR_FILE_CORRUPT
+        Some(1393) => true, // ERROR_DISK_CORRUPT
+        _ => false,
+    }
+}
+
+#[cfg(not(windows))]
+fn is_corruption_io_error(_e: &std::io::Error) -> bool {
+    false
+}
+
 /// 遇到这些目录名时只统计总大小，不递归子项（常见包管理器/缓存目录）
-const SHALLOW_DIR_NAMES: &[&str] = &[
+pub(crate) const SHALLOW_DIR_NAMES: &[&str] = &[
     "node_modules",
     ".git",
     ".github",
@@ -26,7 +41,10 @@ const SHALLOW_DIR_NAMES: &[&str] = &[
     "jspm_packages",
 ];
 
-type ProgressCb = Box<dyn Fn(u64, &str) + Send + Sync>;
+pub(crate) type ProgressCb = Box<dyn Fn(u64, &str) + Send + Sync>;
+
+/// 可共享的进度回调，用于 MFT 加载时在后台线程中上报进度。
+pub(crate) type ProgressCbArc = std::sync::Arc<ProgressCb>;
 
 /// 仅统计目录总大小，不构建子树（用于 shallow 目录）
 fn dir_size_only(
@@ -43,6 +61,9 @@ fn dir_size_only(
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
             // 路径不存在（符号链接失效、文件被删除等），跳过
             return Ok(0);
+        }
+        Err(e) if is_corruption_io_error(&e) => {
+            return Ok(0); // 损坏，跳过该目录
         }
         Err(e) => return Err(DiskAnalyzerError::Io(e)),
     };
@@ -71,16 +92,32 @@ fn build_tree(
     progress: Option<&ProgressCb>,
     shallow_dirs: bool,
 ) -> Result<(FileNode, u64), DiskAnalyzerError> {
-    let metadata = std::fs::metadata(path).map_err(|e| {
-        if e.kind() == std::io::ErrorKind::PermissionDenied {
-            DiskAnalyzerError::PermissionDenied(path.display().to_string())
-        } else if e.kind() == std::io::ErrorKind::NotFound {
-            // 路径不存在（符号链接失效、文件在扫描过程中被删除等）
-            DiskAnalyzerError::PermissionDenied(format!("{} [路径不存在]", path.display()))
-        } else {
-            DiskAnalyzerError::Io(e)
+    let metadata = match std::fs::metadata(path) {
+        Ok(m) => m,
+        Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
+            return Err(DiskAnalyzerError::PermissionDenied(path.display().to_string()));
         }
-    })?;
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return Err(DiskAnalyzerError::PermissionDenied(format!(
+                "{} [路径不存在]",
+                path.display()
+            )));
+        }
+        Err(e) if is_corruption_io_error(&e) => {
+            return Ok((
+                FileNode {
+                    path: path.display().to_string(),
+                    name: format!("{} [损坏]", name),
+                    size: 0,
+                    is_dir: false,
+                    modified: None,
+                    children: vec![],
+                },
+                0u64,
+            ));
+        }
+        Err(e) => return Err(DiskAnalyzerError::Io(e)),
+    };
 
     let is_dir = metadata.is_dir();
     let mut size = if is_dir { 0u64 } else { metadata.len() };
@@ -88,18 +125,37 @@ fn build_tree(
     let mut children = Vec::new();
 
     if is_dir && depth < MAX_DEPTH {
-        let mut entries: Vec<_> = std::fs::read_dir(path).map_err(|e| {
-            if e.kind() == std::io::ErrorKind::PermissionDenied {
-                DiskAnalyzerError::PermissionDenied(path.display().to_string())
-            } else if e.kind() == std::io::ErrorKind::NotFound {
-                // 路径不存在（符号链接失效、目录在扫描过程中被删除等）
-                DiskAnalyzerError::PermissionDenied(format!("{} [路径不存在]", path.display()))
-            } else {
-                DiskAnalyzerError::Io(e)
+        let entries = match std::fs::read_dir(path) {
+            Ok(iter) => iter,
+            Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
+                return Err(DiskAnalyzerError::PermissionDenied(path.display().to_string()));
             }
-        })?
-        .filter_map(|e| e.ok())
-        .collect();
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                return Err(DiskAnalyzerError::PermissionDenied(format!(
+                    "{} [路径不存在]",
+                    path.display()
+                )));
+            }
+            Err(e) if is_corruption_io_error(&e) => {
+                return Ok((
+                    FileNode {
+                        path: path.display().to_string(),
+                        name: name.to_string(),
+                        size: 0,
+                        is_dir: true,
+                        modified: metadata
+                            .modified()
+                            .ok()
+                            .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+                            .map(|d| d.as_secs()),
+                        children: vec![],
+                    },
+                    0u64,
+                ));
+            }
+            Err(e) => return Err(DiskAnalyzerError::Io(e)),
+        };
+        let mut entries: Vec<_> = entries.filter_map(|e| e.ok()).collect();
 
         entries.sort_by(|a, b| {
             let a_is_dir = a.path().is_dir();
@@ -107,7 +163,10 @@ fn build_tree(
             match (a_is_dir, b_is_dir) {
                 (true, false) => std::cmp::Ordering::Less,
                 (false, true) => std::cmp::Ordering::Greater,
-                _ => a.file_name().cmp(&b.file_name()),
+                _ => a
+                    .file_name()
+                    .cmp(&b.file_name())
+                    .then_with(|| a.path().as_os_str().cmp(b.path().as_os_str())),
             }
         });
 
@@ -154,6 +213,17 @@ fn build_tree(
                             },
                             0u64,
                         )),
+                        Err(DiskAnalyzerError::Io(ref e)) if is_corruption_io_error(e) => Ok((
+                            FileNode {
+                                path: child_path.display().to_string(),
+                                name: format!("{} [损坏]", child_name),
+                                size: 0,
+                                is_dir: true,
+                                modified: None,
+                                children: vec![],
+                            },
+                            0u64,
+                        )),
                         Err(e) => Err(e),
                     }
                 } else {
@@ -170,6 +240,17 @@ fn build_tree(
                             FileNode {
                                 path: child_path.display().to_string(),
                                 name: format!("{} [无权限]", child_name),
+                                size: 0,
+                                is_dir: child_path.is_dir(),
+                                modified: None,
+                                children: vec![],
+                            },
+                            0u64,
+                        )),
+                        Err(DiskAnalyzerError::Io(ref e)) if is_corruption_io_error(e) => Ok((
+                            FileNode {
+                                path: child_path.display().to_string(),
+                                name: format!("{} [损坏]", child_name),
                                 size: 0,
                                 is_dir: child_path.is_dir(),
                                 modified: None,
@@ -216,19 +297,59 @@ fn build_tree(
 }
 
 /// 规范化路径（支持正斜杠、去除首尾空白）
-fn normalize_path(path: &str) -> std::path::PathBuf {
+pub(crate) fn normalize_path(path: &str) -> std::path::PathBuf {
     let s = path.trim();
     #[cfg(windows)]
     let s = s.replace('/', "\\");
     std::path::PathBuf::from(s)
 }
 
-/// 执行磁盘扫描（支持进度回调；shallow_dirs 为 true 时对 node_modules/.git 等只计大小不递归）
+/// 通过操作系统 API 获取该路径所在卷的总容量与剩余空间（仅 Windows 有效）。
+fn get_volume_space_for_result_path(path: &std::path::Path) -> (Option<u64>, Option<u64>) {
+    #[cfg(windows)]
+    {
+        let s = path.to_string_lossy();
+        match crate::mft_scan::get_volume_space_bytes(&s) {
+            Some((t, f)) => (Some(t), Some(f)),
+            None => (None, None),
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = path;
+        (None, None)
+    }
+}
+
+/// 判断本次扫描是否会使用 MFT（在真正开始扫描前可调用，用于提前打日志）。
+/// 条件：use_mft 为 true、路径存在、为 Windows 卷根（如 C:\）。
+pub fn scan_will_use_mft(path: &str, use_mft: bool) -> bool {
+    if !use_mft {
+        return false;
+    }
+    let path_buf = normalize_path(path);
+    if !path_buf.exists() {
+        return false;
+    }
+    let path_buf = match std::fs::canonicalize(&path_buf) {
+        Ok(p) => p,
+        Err(_) => return false,
+    };
+    #[cfg(windows)]
+    return crate::mft_scan::is_windows_volume_root(&path_buf);
+    #[cfg(not(windows))]
+    return false;
+}
+
+/// 执行磁盘扫描（支持进度回调；shallow_dirs 为 true 时对 node_modules/.git 等只计大小不递归）。
+/// 当 use_mft 为 true 且路径为 Windows 磁盘卷根（如 C:\）时，优先使用 MFT 加速扫描。
+/// 返回 `(ScanResult, used_mft)`，其中 `used_mft` 表示本次是否成功使用了 MFT。
 pub fn scan_path_with_progress(
     path: &str,
-    progress: Option<ProgressCb>,
+    progress: Option<ProgressCbArc>,
     shallow_dirs: bool,
-) -> Result<ScanResult, DiskAnalyzerError> {
+    use_mft: bool,
+) -> Result<(ScanResult, bool), DiskAnalyzerError> {
     let start = Instant::now();
     let path_buf = normalize_path(path);
 
@@ -239,6 +360,24 @@ pub fn scan_path_with_progress(
     let path_buf = std::fs::canonicalize(&path_buf)
         .map_err(|e| DiskAnalyzerError::InvalidPath(format!("无法解析路径: {}", e)))?;
 
+    let mut mft_fallback_reason: Option<String> = None;
+    #[cfg(windows)]
+    if use_mft && crate::mft_scan::is_windows_volume_root(&path_buf) {
+        eprintln!("[scan] path is volume root, attempting MFT full scan: {}", path_buf.display());
+        match crate::mft_scan::scan_volume_mft(path, progress.clone(), shallow_dirs) {
+            Ok(result) => return Ok((result, true)),
+            Err(e) => {
+                let msg = e.to_string();
+                eprintln!(
+                    "[scan] MFT scan unavailable, falling back to normal walk. reason: {} (on Windows, reading $MFT often needs admin)",
+                    msg
+                );
+                mft_fallback_reason = Some(msg);
+            }
+        }
+    }
+
+    eprintln!("[scan] using normal directory walk: {}", path_buf.display());
     let name = path_buf
         .file_name()
         .and_then(|n| n.to_str())
@@ -251,23 +390,31 @@ pub fn scan_path_with_progress(
         &name,
         0,
         &counter,
-        progress.as_ref(),
+        progress.as_deref(),
         shallow_dirs,
     )?;
     let scan_time_ms = start.elapsed().as_millis() as u64;
     let total_size = root.size;
 
-    Ok(ScanResult {
-        root,
-        scan_time_ms,
-        file_count,
-        total_size,
-    })
+    let (volume_total_bytes, volume_free_bytes) = get_volume_space_for_result_path(&path_buf);
+
+    Ok((
+        ScanResult {
+            root,
+            scan_time_ms,
+            file_count,
+            total_size,
+            scan_warning: mft_fallback_reason,
+            volume_total_bytes,
+            volume_free_bytes,
+        },
+        false,
+    ))
 }
 
-/// 执行磁盘扫描（无进度；默认开启 shallow_dirs）
+/// 执行磁盘扫描（无进度；默认开启 shallow_dirs；默认开启 MFT 加速卷根）
 pub fn scan_path(path: &str) -> Result<ScanResult, DiskAnalyzerError> {
-    scan_path_with_progress(path, None, true)
+    scan_path_with_progress(path, None, true, true).map(|(r, _)| r)
 }
 
 #[cfg(test)]

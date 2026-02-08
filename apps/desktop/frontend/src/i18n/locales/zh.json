@@ -69,11 +69,14 @@
     "processTime": "处理耗时",
     "totalFiles": "文件总计",
     "diskUsage": "占用空间",
+    "volumeCapacity": "卷容量",
     "processedFiles": "已处理文件对象",
     "errorOccurred": "发生错误",
     "needApiConfig": "标准模式需先配置 API。",
     "diskView": "分布视窗",
-    "aiInstructions": "AI 指令集"
+    "aiInstructions": "AI 指令集",
+    "mftHintWhenDiskRoot": "当前为磁盘根路径，若已开启 MFT 将使用 MFT 全量扫描加速（需管理员权限）",
+    "scanHasError": "此磁盘的扫描有错误（已改用普通扫描继续）"
   },
   "aiAnalysis": {
     "preparing": "准备 AI 分析...",
@@ -261,7 +264,9 @@
     "testConnection": "测试连接",
     "testConnectionTesting": "测试中…",
     "testConnectionSuccess": "大模型连接成功",
-    "testConnectionFailed": "大模型连接失败"
+    "testConnectionFailed": "大模型连接失败",
+    "useMftScan": "使用 MFT 加速扫描磁盘根路径",
+    "useMftScanHint": "勾选后，当扫描 C 盘、D 盘等磁盘根路径时使用 NTFS MFT 技术加速（仅 Windows 有效）"
   },
   "errors": {
     "noValidConfig": "未找到有效的云存储配置",
