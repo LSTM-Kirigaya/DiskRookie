@@ -16,29 +16,17 @@ use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap};
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::mpsc;
-use std::thread;
 use std::time::Instant;
 
 use ai_disk_common::DiskAnalyzerError;
 use ai_disk_domain::{FileNode, ScanResult, TopFileEntry};
-use ntfs_reader::aligned_reader::open_volume;
-use ntfs_reader::api::NtfsAttributeType;
 use ntfs_reader::errors::NtfsReaderError;
 use ntfs_reader::file_info::{FileInfo, HashMapCache};
-use ntfs_reader::mft::{Mft, MftRef, MftStreamChunk};
+use ntfs_reader::mft::Mft;
 use ntfs_reader::volume::Volume;
 use rayon::prelude::*;
 
 use crate::scanner::{normalize_path, ProgressCb, ProgressCbArc, SHALLOW_DIR_NAMES};
-
-/// 生产者-消费者队列消息：先发记录大小、Bitmap、Volume，再发 $DATA 流式块，以便消费者边收边用 MftRef 迭代并上报文件数。
-enum MftLoadMessage {
-    RecordSize(u64),
-    Bitmap(Vec<u8>),
-    Volume(Volume),
-    DataChunk(MftStreamChunk),
-}
 
 /// 通过 Windows API GetDiskFreeSpaceExW 获取卷总容量与剩余空间（字节）。
 /// 仅 Windows 有效；path 为卷上任意路径（如 "C:\" 或 "C:\Users"）。
@@ -352,205 +340,59 @@ pub fn scan_volume_mft(
     let volume_path = format!(r"\\.\{}:", drive);
     let volume_root_trim = format!("{}:", drive);
     let volume_root_key = format!(r"{}:\", drive);
-    // 全流程只打开卷一次：主线程打开并读 MFT record 0，再把同一 reader 交给生产者读 Bitmap 与 $DATA，避免多线程/多次打开导致 corrupt MFT record。
-    // 有 progress 时边读边用 MftRef 迭代并上报文件数；否则读完后一次性 iterate_files。两种路径均得到 (volume, records, child_index, direct_sizes, n_records)，再汇总为 recursive_sizes。
-    let (_volume, records, child_index, direct_sizes, n_records) = if let Some(ref progress_arc) = progress {
-        let volume = Volume::new(volume_path.as_str()).map_err(to_disk_analyzer_error)?;
-        eprintln!("[scan:mft] volume opened: {} bytes", volume.volume_size);
-        let mut reader = open_volume(&volume.path)
-            .map_err(NtfsReaderError::IOError)
-            .map_err(to_disk_analyzer_error)?;
-        let record = Mft::get_record_fs(
-            &mut reader,
-            volume.file_record_size as usize,
-            volume.mft_position,
-        )
-        .map_err(to_disk_analyzer_error)?;
-        const QUEUE_CAP: usize = 4;
-        let (tx, rx) = mpsc::sync_channel::<MftLoadMessage>(QUEUE_CAP);
-        let volume_for_consumer = volume.clone();
-        let producer_handle = thread::spawn(move || -> Result<(), DiskAnalyzerError> {
-            let _ = tx.send(MftLoadMessage::RecordSize(volume.file_record_size));
-            let bitmap = Mft::read_data_fs(&volume, &mut reader, &record, NtfsAttributeType::Bitmap, None)
-                .map_err(to_disk_analyzer_error)?
-                .ok_or_else(|| DiskAnalyzerError::InvalidPath("missing $BITMAP".to_string()))?;
-            let _ = tx.send(MftLoadMessage::Bitmap(bitmap));
-            let _ = tx.send(MftLoadMessage::Volume(volume_for_consumer));
-            Mft::stream_data_attribute_to(&volume, &mut reader, &record, |chunk| {
-                let _ = tx.send(MftLoadMessage::DataChunk(chunk));
-            })
-            .map_err(to_disk_analyzer_error)?;
-            drop(tx);
-            Ok(())
+    // 使用上游 ntfs-reader API：Mft::new 一次性加载 $MFT，再 iterate_files 枚举。
+    let volume = Volume::new(volume_path.as_str()).map_err(to_disk_analyzer_error)?;
+    eprintln!("[scan:mft] volume opened: {} bytes", volume.volume_size);
+    let mft = Mft::new(volume).map_err(to_disk_analyzer_error)?;
+    eprintln!("[scan:mft] MFT loaded into memory, max_records={}", mft.max_record);
+    let vol_trim_for_filter = format!("{}:", drive);
+    let mut records: Vec<MftRecord> = Vec::with_capacity(2_000_000);
+    let mut child_index: HashMap<String, Vec<usize>> = HashMap::new();
+    let mut direct_sizes: HashMap<String, u64> = HashMap::new();
+    let mut cache = HashMapCache::default();
+    let counter = AtomicU64::new(0);
+    mft.iterate_files(|file| {
+        let info = FileInfo::with_cache(&mft, file, &mut cache);
+        let path_str = info.path.to_string_lossy();
+        let full_path = normalize_ntfs_path(&path_str, &drive);
+        if !path_under_volume_ascii(&full_path, &vol_trim_for_filter) {
+            return;
+        }
+        let modified = info.modified.and_then(|t| {
+            let s = t.unix_timestamp();
+            if s > 0 { Some(s as u64) } else { None }
         });
-        const FIRST_NORMAL_RECORD: u64 = 24;
-        let vol_trim_for_filter = format!("{}:", drive);
-        let mut records: Vec<MftRecord> = Vec::with_capacity(2_000_000);
-        let mut child_index: HashMap<String, Vec<usize>> = HashMap::new();
-        let mut direct_sizes: HashMap<String, u64> = HashMap::new();
-        let mut cache = HashMapCache::default();
-        let counter = AtomicU64::new(0);
-        let mut data = Vec::new();
-        let mut total_size = 0u64;
-        let mut record_size: u64 = 0;
-        let mut bitmap: Option<Vec<u8>> = None;
-        let mut volume_from_producer: Option<Volume> = None;
-        let mut last_record_index: u64 = 0;
-        while let Ok(msg) = rx.recv() {
-            match msg {
-                MftLoadMessage::RecordSize(rs) => record_size = rs,
-                MftLoadMessage::Bitmap(b) => bitmap = Some(b),
-                MftLoadMessage::Volume(v) => volume_from_producer = Some(v),
-                MftLoadMessage::DataChunk(MftStreamChunk::TotalSize(t)) => {
-                    total_size = t;
-                    data.reserve(t as usize);
-                }
-                MftLoadMessage::DataChunk(MftStreamChunk::Data(v)) => {
-                    data.extend_from_slice(&v);
-                    let rs = record_size as usize;
-                    let start_idx = last_record_index;
-                    if rs > 0 {
-                        if let Some(ref bitmask) = bitmap {
-                            let n = data.len() / rs;
-                            let n_u64 = n as u64;
-                            for i in start_idx..n_u64 {
-                                let start = i as usize * rs;
-                                let end = start + rs;
-                                if end > data.len() {
-                                    break;
-                                }
-                                if let Err(_) = Mft::fixup_record(i, &mut data[start..end]) {
-                                    continue;
-                                }
-                                if i < FIRST_NORMAL_RECORD {
-                                    continue;
-                                }
-                                let bitmap_idx = (i / 8) as usize;
-                                if bitmap_idx >= bitmask.len() {
-                                    continue;
-                                }
-                                if (bitmask[bitmap_idx] & (1u8 << (i % 8) as u8)) == 0 {
-                                    continue;
-                                }
-                            }
-                            last_record_index = n_u64;
-                            if let Some(ref vol) = volume_from_producer {
-                                let mft_ref = MftRef::new(vol, &data, bitmask);
-                                mft_ref.iterate_files_range(start_idx, n_u64, |file| {
-                                    let info = FileInfo::with_cache(&mft_ref, file, &mut cache);
-                                    let path_str = info.path.to_string_lossy();
-                                    let full_path = normalize_ntfs_path(&path_str, &drive);
-                                    if !path_under_volume_ascii(&full_path, &vol_trim_for_filter) {
-                                        return;
-                                    }
-                                    let modified = info.modified.and_then(|t| {
-                                        let s = t.unix_timestamp();
-                                        if s > 0 { Some(s as u64) } else { None }
-                                    });
-                                    let c = counter.fetch_add(1, Ordering::Relaxed);
-                                    if c > 0 && c % PROGRESS_EVERY == 0 {
-                                        progress_arc(c, &full_path);
-                                    }
-                                    records.push(MftRecord {
-                                        full_path: full_path.clone(),
-                                        size: info.size,
-                                        is_dir: info.is_directory,
-                                        modified,
-                                    });
-                                    let idx = records.len() - 1;
-                                    let path_trim = full_path.trim_end_matches('\\');
-                                    if !path_trim.eq_ignore_ascii_case(&volume_root_trim) {
-                                        if let Some(i) = full_path.rfind('\\') {
-                                            let parent = full_path[..i].to_string();
-                                            child_index.entry(parent).or_default().push(idx);
-                                        }
-                                    }
-                                    let s = info.size;
-                                    direct_sizes
-                                        .entry(path_trim.to_string())
-                                        .and_modify(|v| *v = v.saturating_add(s))
-                                        .or_insert(s);
-                                });
-                            }
-                        }
-                    }
-                    let pct = if total_size > 0 {
-                        (100u64 * data.len() as u64 / total_size).min(100)
-                    } else {
-                        0
-                    };
-                    progress_arc(counter.load(Ordering::Relaxed), &format!("[scan:mft] Loading MFT {}%", pct));
-                }
+        let c = counter.fetch_add(1, Ordering::Relaxed);
+        if c > 0 && c % PROGRESS_EVERY == 0 {
+            if let Some(ref cb) = progress {
+                cb(c, &full_path);
             }
         }
-        let volume = volume_from_producer.ok_or_else(|| {
-            DiskAnalyzerError::InvalidPath("MFT volume not received from producer".to_string())
-        })?;
-        let _bitmap = bitmap.ok_or_else(|| {
-            DiskAnalyzerError::InvalidPath("MFT bitmap not received".to_string())
-        })?;
-        producer_handle.join().map_err(|_| {
-            DiskAnalyzerError::Io(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                "MFT producer thread panicked",
-            ))
-        })??;
-        let n_records = counter.load(Ordering::Relaxed);
-        if let Some(ref cb) = progress {
-            cb(n_records, &volume_root_str);
-        }
-        Ok((volume, records, child_index, direct_sizes, n_records))
-    } else {
-        let volume = Volume::new(volume_path.as_str()).map_err(to_disk_analyzer_error)?;
-        eprintln!("[scan:mft] volume opened: {} bytes", volume.volume_size);
-        let mft = Mft::new_with_progress(volume, None).map_err(to_disk_analyzer_error)?;
-        eprintln!("[scan:mft] MFT loaded into memory, max_records={}", mft.max_record);
-        let vol_trim_for_filter = format!("{}:", drive);
-        let mut records: Vec<MftRecord> = Vec::with_capacity(2_000_000);
-        let mut child_index: HashMap<String, Vec<usize>> = HashMap::new();
-        let mut direct_sizes: HashMap<String, u64> = HashMap::new();
-        let mut cache = HashMapCache::default();
-        let counter = AtomicU64::new(0);
-        mft.iterate_files(|file| {
-            let info = FileInfo::with_cache(&mft, file, &mut cache);
-            let path_str = info.path.to_string_lossy();
-            let full_path = normalize_ntfs_path(&path_str, &drive);
-            if !path_under_volume_ascii(&full_path, &vol_trim_for_filter) {
-                return;
-            }
-            let modified = info.modified.and_then(|t| {
-                let s = t.unix_timestamp();
-                if s > 0 { Some(s as u64) } else { None }
-            });
-            let c = counter.fetch_add(1, Ordering::Relaxed);
-            if c > 0 && c % PROGRESS_EVERY == 0 {
-                if let Some(ref cb) = progress {
-                    cb(c, &full_path);
-                }
-            }
-            records.push(MftRecord {
-                full_path: full_path.clone(),
-                size: info.size,
-                is_dir: info.is_directory,
-                modified,
-            });
-            let idx = records.len() - 1;
-            let path_trim = full_path.trim_end_matches('\\');
-            if !path_trim.eq_ignore_ascii_case(&volume_root_trim) {
-                if let Some(i) = full_path.rfind('\\') {
-                    let parent = full_path[..i].to_string();
-                    child_index.entry(parent).or_default().push(idx);
-                }
-            }
-            let s = info.size;
-            direct_sizes
-                .entry(path_trim.to_string())
-                .and_modify(|v| *v = v.saturating_add(s))
-                .or_insert(s);
+        records.push(MftRecord {
+            full_path: full_path.clone(),
+            size: info.size,
+            is_dir: info.is_directory,
+            modified,
         });
-        let n_records = counter.load(Ordering::Relaxed);
-        Ok::<_, DiskAnalyzerError>((mft.volume.clone(), records, child_index, direct_sizes, n_records))
-    }?;
+        let idx = records.len() - 1;
+        let path_trim = full_path.trim_end_matches('\\');
+        if !path_trim.eq_ignore_ascii_case(&volume_root_trim) {
+            if let Some(i) = full_path.rfind('\\') {
+                let parent = full_path[..i].to_string();
+                child_index.entry(parent).or_default().push(idx);
+            }
+        }
+        let s = info.size;
+        direct_sizes
+            .entry(path_trim.to_string())
+            .and_modify(|v| *v = v.saturating_add(s))
+            .or_insert(s);
+    });
+    let n_records = counter.load(Ordering::Relaxed);
+    if let Some(ref cb) = progress {
+        cb(n_records, &volume_root_str);
+    }
+    let _volume = mft.volume.clone();
     let recursive_sizes = compute_recursive_sizes(
         &records,
         &child_index,
