@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "tauri dev",
     "build": "tauri build",
+    "build:exe": "tauri build --target x86_64-pc-windows-msvc --no-bundle",
     "frontend:dev": "cd frontend && npm run dev",
     "frontend:build": "cd frontend && npm run build"
   },
