@@ -79,7 +79,10 @@ fn dir_size_only(
     }
     counter.fetch_add(1, Ordering::Relaxed);
     if let Some(ref cb) = progress {
-        cb(counter.load(Ordering::Relaxed), path.display().to_string().as_str());
+        cb(
+            counter.load(Ordering::Relaxed),
+            path.display().to_string().as_str(),
+        );
     }
     Ok(total)
 }
@@ -95,7 +98,9 @@ fn build_tree(
     let metadata = match std::fs::metadata(path) {
         Ok(m) => m,
         Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
-            return Err(DiskAnalyzerError::PermissionDenied(path.display().to_string()));
+            return Err(DiskAnalyzerError::PermissionDenied(
+                path.display().to_string(),
+            ));
         }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
             return Err(DiskAnalyzerError::PermissionDenied(format!(
@@ -128,7 +133,9 @@ fn build_tree(
         let entries = match std::fs::read_dir(path) {
             Ok(iter) => iter,
             Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
-                return Err(DiskAnalyzerError::PermissionDenied(path.display().to_string()));
+                return Err(DiskAnalyzerError::PermissionDenied(
+                    path.display().to_string(),
+                ));
             }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
                 return Err(DiskAnalyzerError::PermissionDenied(format!(
@@ -331,19 +338,23 @@ pub fn scan_will_use_mft(path: &str, use_mft: bool) -> bool {
     if !path_buf.exists() {
         return false;
     }
-    let path_buf = match std::fs::canonicalize(&path_buf) {
+    let canonical = match std::fs::canonicalize(&path_buf) {
         Ok(p) => p,
         Err(_) => return false,
     };
     #[cfg(windows)]
-    return crate::mft_scan::is_windows_volume_root(&path_buf);
+    return crate::mft_scan::is_windows_volume_root(&canonical);
     #[cfg(not(windows))]
-    return false;
+    {
+        let _ = canonical;
+        false
+    }
 }
 
 /// 执行磁盘扫描（支持进度回调；shallow_dirs 为 true 时对 node_modules/.git 等只计大小不递归）。
 /// 当 use_mft 为 true 且路径为 Windows 磁盘卷根（如 C:\）时，优先使用 MFT 加速扫描。
 /// 返回 `(ScanResult, used_mft)`，其中 `used_mft` 表示本次是否成功使用了 MFT。
+#[allow(clippy::needless_pass_by_value)]
 pub fn scan_path_with_progress(
     path: &str,
     progress: Option<ProgressCbArc>,
@@ -354,16 +365,24 @@ pub fn scan_path_with_progress(
     let path_buf = normalize_path(path);
 
     if !path_buf.exists() {
-        return Err(DiskAnalyzerError::InvalidPath(format!("路径不存在: {}", path)));
+        return Err(DiskAnalyzerError::InvalidPath(format!(
+            "路径不存在: {}",
+            path
+        )));
     }
 
     let path_buf = std::fs::canonicalize(&path_buf)
         .map_err(|e| DiskAnalyzerError::InvalidPath(format!("无法解析路径: {}", e)))?;
 
+    #[allow(unused_mut, unused_assignments)]
     let mut mft_fallback_reason: Option<String> = None;
+    let _ = use_mft; // used only on windows
     #[cfg(windows)]
     if use_mft && crate::mft_scan::is_windows_volume_root(&path_buf) {
-        eprintln!("[scan] path is volume root, attempting MFT full scan: {}", path_buf.display());
+        eprintln!(
+            "[scan] path is volume root, attempting MFT full scan: {}",
+            path_buf.display()
+        );
         match crate::mft_scan::scan_volume_mft(path, progress.clone(), shallow_dirs) {
             Ok(result) => return Ok((result, true)),
             Err(e) => {
@@ -429,8 +448,14 @@ mod tests {
         let path = dir.path().to_string_lossy().to_string();
         let sub = dir.path().join("subdir");
         fs::create_dir_all(&sub).unwrap();
-        File::create(sub.join("a.txt")).unwrap().write_all(b"hello").unwrap();
-        File::create(dir.path().join("b.txt")).unwrap().write_all(b"world").unwrap();
+        File::create(sub.join("a.txt"))
+            .unwrap()
+            .write_all(b"hello")
+            .unwrap();
+        File::create(dir.path().join("b.txt"))
+            .unwrap()
+            .write_all(b"world")
+            .unwrap();
         (dir, path)
     }
 
@@ -465,7 +490,7 @@ mod tests {
         let result = scan_path(&path).unwrap();
         assert!(result.file_count >= 2);
         assert!(result.total_size >= 10);
-        assert!(result.scan_time_ms >= 0);
+
         assert!(!result.root.children.is_empty());
     }
 

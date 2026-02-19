@@ -1,3 +1,4 @@
+#![cfg(windows)]
 //! 扫描耗时测试：对指定卷（**默认 F 盘** `F:\`）分别使用 MFT 与普通遍历扫描，统计并输出耗时。
 //!
 //! - **MFT 扫描**：使用已实现的 `scan_path_with_progress(..., use_mft: true)`（卷根时走 MFT，需管理员权限）。
@@ -36,9 +37,9 @@ use std::fs;
 use std::path::Path;
 use std::time::Instant;
 
-use ai_disk_scanner::{scan_path_with_progress, FileNode, ScanResult};
 #[cfg(windows)]
 use ai_disk_scanner::scan_volume_mft_top_files;
+use ai_disk_scanner::{scan_path_with_progress, FileNode, ScanResult};
 
 /// 默认扫描盘符：F 盘
 const DEFAULT_SCAN_PATH: &str = "F:\\";
@@ -64,7 +65,15 @@ fn scan_timing_mft_vs_normal() {
     if let Ok(v) = std::env::var("SCAN_PATH") {
         eprintln!("[scan_timing] SCAN_PATH env: {:?}", v);
     }
-    eprintln!("[scan_timing] path: {:?} {}", path, if path == DEFAULT_SCAN_PATH { "(default F:)" } else { "" });
+    eprintln!(
+        "[scan_timing] path: {:?} {}",
+        path,
+        if path == DEFAULT_SCAN_PATH {
+            "(default F:)"
+        } else {
+            ""
+        }
+    );
     if !Path::new(&path).exists() {
         eprintln!("[scan_timing] path does not exist, skipping test");
         return;
@@ -88,7 +97,10 @@ fn scan_timing_mft_vs_normal() {
             );
         }
         Err(e) => {
-            eprintln!("[scan_timing] MFT scan: failed, elapsed={:?}, error={}", elapsed_mft, e);
+            eprintln!(
+                "[scan_timing] MFT scan: failed, elapsed={:?}, error={}",
+                elapsed_mft, e
+            );
         }
     }
 
@@ -157,10 +169,17 @@ fn scan_timing_mft_vs_normal() {
                 ms_mft, ms_normal, ratio
             );
         } else {
-            eprintln!("[scan_timing] summary: MFT={} ms, normal={} ms", ms_mft, ms_normal);
+            eprintln!(
+                "[scan_timing] summary: MFT={} ms, normal={} ms",
+                ms_mft, ms_normal
+            );
         }
     } else if result_mft.is_ok() && !run_normal {
-        eprintln!("[scan_timing] summary: MFT elapsed={} ms ({:.2} s)", ms_mft, elapsed_mft.as_secs_f64());
+        eprintln!(
+            "[scan_timing] summary: MFT elapsed={} ms ({:.2} s)",
+            ms_mft,
+            elapsed_mft.as_secs_f64()
+        );
     } else if result_mft.is_err() && result_normal.is_err() && run_normal {
         eprintln!("[scan_timing] summary: both scans failed, see errors above; test skips assert");
     }
@@ -199,7 +218,10 @@ fn scan_timing_c_and_f() {
                 results.push((path.to_string(), Some(elapsed_ms as u64), None));
             }
             Err(e) => {
-                eprintln!("[scan_timing_c_and_f] {} 失败: {} (elapsed={} ms)", path, e, elapsed_ms);
+                eprintln!(
+                    "[scan_timing_c_and_f] {} 失败: {} (elapsed={} ms)",
+                    path, e, elapsed_ms
+                );
                 results.push((path.to_string(), None, Some(e.to_string())));
             }
         }
@@ -209,7 +231,12 @@ fn scan_timing_c_and_f() {
     for (path, ms, err) in &results {
         match (ms, err) {
             (Some(ms), None) => {
-                eprintln!("[scan_timing_c_and_f] {} 耗时: {} ms ({:.2} s)", path, ms, *ms as f64 / 1000.0);
+                eprintln!(
+                    "[scan_timing_c_and_f] {} 耗时: {} ms ({:.2} s)",
+                    path,
+                    ms,
+                    *ms as f64 / 1000.0
+                );
             }
             (_, Some(e)) => {
                 eprintln!("[scan_timing_c_and_f] {} 失败: {}", path, e);
@@ -255,7 +282,10 @@ fn scan_timing_mft_vs_normal_c_and_f() {
                 entry.mft_ms = Some(mft_ms);
             }
             Err(e) => {
-                eprintln!("[MFT_vs_normal] {} MFT 失败: {} 耗时={} ms", path, e, mft_ms);
+                eprintln!(
+                    "[MFT_vs_normal] {} MFT 失败: {} 耗时={} ms",
+                    path, e, mft_ms
+                );
                 entry.mft_err = Some(e.to_string());
             }
         }
@@ -267,12 +297,19 @@ fn scan_timing_mft_vs_normal_c_and_f() {
             Ok((r, _)) => {
                 eprintln!(
                     "[MFT_vs_normal] {} 普通扫描 file_count={} total_size={} 耗时={} ms ({:.2} s)",
-                    path, r.file_count, r.total_size, normal_ms, normal_ms as f64 / 1000.0
+                    path,
+                    r.file_count,
+                    r.total_size,
+                    normal_ms,
+                    normal_ms as f64 / 1000.0
                 );
                 entry.normal_ms = Some(normal_ms);
             }
             Err(e) => {
-                eprintln!("[MFT_vs_normal] {} 普通扫描 失败: {} 耗时={} ms", path, e, normal_ms);
+                eprintln!(
+                    "[MFT_vs_normal] {} 普通扫描 失败: {} 耗时={} ms",
+                    path, e, normal_ms
+                );
                 entry.normal_err = Some(e.to_string());
             }
         }
@@ -306,7 +343,10 @@ fn scan_timing_mft_vs_normal_c_and_f() {
             (Some(m), Some(n)) if n > 0 => format!("{:.2}x", m as f64 / n as f64),
             _ => "-".to_string(),
         };
-        eprintln!("[MFT_vs_normal] {:4} | {:>19} | {:>19} | {}", path, mft_s, norm_s, ratio_s);
+        eprintln!(
+            "[MFT_vs_normal] {:4} | {:>19} | {:>19} | {}",
+            path, mft_s, norm_s, ratio_s
+        );
     }
 }
 
@@ -362,7 +402,11 @@ fn scan_timing_top500_c_and_f() {
             Ok(list) => {
                 eprintln!(
                     "[top500] {} MFT(top{})  耗时={} ms ({:.2} s)  得到 {} 条",
-                    path, TOP_N, mft_ms, mft_ms as f64 / 1000.0, list.len()
+                    path,
+                    TOP_N,
+                    mft_ms,
+                    mft_ms as f64 / 1000.0,
+                    list.len()
                 );
                 row.mft_ms = Some(mft_ms);
             }
@@ -380,12 +424,19 @@ fn scan_timing_top500_c_and_f() {
                 let top = top_files_from_tree(&r.root, TOP_N);
                 eprintln!(
                     "[top500] {} 普通(全盘→top{})  耗时={} ms ({:.2} s)  得到 {} 条",
-                    path, TOP_N, normal_ms, normal_ms as f64 / 1000.0, top.len()
+                    path,
+                    TOP_N,
+                    normal_ms,
+                    normal_ms as f64 / 1000.0,
+                    top.len()
                 );
                 row.normal_ms = Some(normal_ms);
             }
             Err(e) => {
-                eprintln!("[top500] {} 普通扫描 失败: {}  耗时={} ms", path, e, normal_ms);
+                eprintln!(
+                    "[top500] {} 普通扫描 失败: {}  耗时={} ms",
+                    path, e, normal_ms
+                );
                 row.normal_err = Some(e.to_string());
             }
         }
@@ -394,7 +445,10 @@ fn scan_timing_top500_c_and_f() {
             if norm > 0 {
                 eprintln!(
                     "[top500] {} 对比: MFT={} ms, 普通={} ms, MFT/普通={:.2}x",
-                    path, mft, norm, mft as f64 / norm as f64
+                    path,
+                    mft,
+                    norm,
+                    mft as f64 / norm as f64
                 );
             }
         }
@@ -403,7 +457,10 @@ fn scan_timing_top500_c_and_f() {
     eprintln!("[top500] ----------------------------------------");
     eprintln!("[top500] 表格数据（仅取前 {} 大文件）", TOP_N);
     eprintln!("[top500]");
-    eprintln!("[top500] | 盘符 | MFT (top{}) 耗时 (ms) | 普通扫描 (全盘→top{}) 耗时 (ms) | MFT/普通 |", TOP_N, TOP_N);
+    eprintln!(
+        "[top500] | 盘符 | MFT (top{}) 耗时 (ms) | 普通扫描 (全盘→top{}) 耗时 (ms) | MFT/普通 |",
+        TOP_N, TOP_N
+    );
     eprintln!("[top500] |------|--------------------------|----------------------------------|----------|");
     let default_row = Row::default();
     for path in &paths {
@@ -420,7 +477,10 @@ fn scan_timing_top500_c_and_f() {
             (Some(m), Some(n)) if n > 0 => format!("{:.2}x", m as f64 / n as f64),
             _ => "-".to_string(),
         };
-        eprintln!("[top500] | {:4} | {:>24} | {:>32} | {:>8} |", path, mft_s, norm_s, ratio_s);
+        eprintln!(
+            "[top500] | {:4} | {:>24} | {:>32} | {:>8} |",
+            path, mft_s, norm_s, ratio_s
+        );
     }
     eprintln!("[top500]");
 }
@@ -431,7 +491,7 @@ const WIN_ERROR_ACCESS_DENIED: i32 = 5;
 /// 遍历目录，遇到无法读取的路径就输出并继续（用于定位损坏部分）。
 /// 拒绝访问 (os error 5) 的目录/文件直接跳过，不计数、不递归。
 fn find_bad_paths_impl(path: &Path, depth: usize, max_depth: usize, max_report: &mut usize) {
-    if *max_report <= 0 || depth > max_depth {
+    if *max_report == 0 || depth > max_depth {
         return;
     }
     let entries = match fs::read_dir(path) {
@@ -452,7 +512,7 @@ fn find_bad_paths_impl(path: &Path, depth: usize, max_depth: usize, max_report: 
         }
     };
     for entry in entries.filter_map(|e| e.ok()) {
-        if *max_report <= 0 {
+        if *max_report == 0 {
             return;
         }
         let p = entry.path();
@@ -483,7 +543,10 @@ fn find_bad_paths_impl(path: &Path, depth: usize, max_depth: usize, max_report: 
 #[cfg(windows)]
 fn find_bad_paths() {
     let path = scan_path();
-    eprintln!("[find_bad_paths] checking path for bad/unreadable entries: {}", path);
+    eprintln!(
+        "[find_bad_paths] checking path for bad/unreadable entries: {}",
+        path
+    );
     eprintln!("[find_bad_paths] max depth 8, max 50 reports");
     eprintln!("[find_bad_paths] ----------------------------------------");
     if !Path::new(&path).exists() {

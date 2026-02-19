@@ -166,7 +166,7 @@ export function simulateProgress(
     })
 
     // 返回一个可以被外部解决的 promise
-    ;(signal as any).__completeProgress = () => {
+    ;(signal as unknown as { __completeProgress: () => void }).__completeProgress = () => {
       clearInterval(timer)
       onProgress(100)
       resolve()

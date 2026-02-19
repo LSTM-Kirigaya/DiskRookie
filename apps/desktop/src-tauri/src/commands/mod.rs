@@ -1,10 +1,10 @@
-pub mod scan;
 pub mod analyze;
-pub mod plan;
-pub mod execute;
-pub mod permission;
-pub mod delete;
-pub mod storage;
-pub mod oauth;
 pub mod cloud_upload;
+pub mod delete;
+pub mod execute;
+pub mod oauth;
 pub mod open_in_file_manager;
+pub mod permission;
+pub mod plan;
+pub mod scan;
+pub mod storage;

@@ -1,7 +1,6 @@
 mod commands;
 
 use commands::oauth::OAuthState;
-use log;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -11,7 +10,7 @@ pub fn run() {
         .filter_module("tao", log::LevelFilter::Error)
         .filter_module("winit", log::LevelFilter::Error)
         .init();
-    
+
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())

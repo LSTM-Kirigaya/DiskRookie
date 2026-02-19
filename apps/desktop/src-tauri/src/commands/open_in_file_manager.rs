@@ -59,10 +59,7 @@ pub async fn open_in_file_manager(path: String, is_file: bool) -> Result<(), Str
             .map_err(|e| format!("无法解析路径: {}", e))?;
         let path_str = path_abs.to_string_lossy();
         let dir = if is_file {
-            path_abs
-                .parent()
-                .ok_or("无法获取父目录")?
-                .to_string_lossy()
+            path_abs.parent().ok_or("无法获取父目录")?.to_string_lossy()
         } else {
             path_str
         };

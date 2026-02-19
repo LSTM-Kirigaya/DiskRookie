@@ -23,12 +23,15 @@ pub async fn scan_path_command(
     // 明确使用传入值：None 视为默认 true，Some(false) 必须为 false
     let use_mft = use_mft.unwrap_or(true);
 
-    let thread_count = std::thread::available_parallelism().map(|p| p.get()).unwrap_or(1);
+    let thread_count = std::thread::available_parallelism()
+        .map(|p| p.get())
+        .unwrap_or(1);
     if use_mft {
         let _ = writeln!(
             std::io::stderr(),
             "[DiskRookie] scan start (MFT requested), path: {}, threads: {}",
-            path_trimmed, thread_count
+            path_trimmed,
+            thread_count
         );
     } else {
         let _ = writeln!(
@@ -53,9 +56,21 @@ pub async fn scan_path_command(
     .map_err(|e| e.to_string())?;
 
     if used_mft {
-        let _ = writeln!(std::io::stderr(), "[DiskRookie] scan done (MFT used), path: {}, file_count: {}, total_size: {}", path_trimmed, result.file_count, result.total_size);
+        let _ = writeln!(
+            std::io::stderr(),
+            "[DiskRookie] scan done (MFT used), path: {}, file_count: {}, total_size: {}",
+            path_trimmed,
+            result.file_count,
+            result.total_size
+        );
     } else {
-        let _ = writeln!(std::io::stderr(), "[DiskRookie] scan done (normal walk), path: {}, file_count: {}, total_size: {}", path_trimmed, result.file_count, result.total_size);
+        let _ = writeln!(
+            std::io::stderr(),
+            "[DiskRookie] scan done (normal walk), path: {}, file_count: {}, total_size: {}",
+            path_trimmed,
+            result.file_count,
+            result.total_size
+        );
     }
     stderr_flush();
     let _ = window_emit.emit("scan-mft-status", (path_trimmed.clone(), used_mft));

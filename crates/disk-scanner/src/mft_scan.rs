@@ -84,10 +84,7 @@ fn to_disk_analyzer_error(e: NtfsReaderError) -> DiskAnalyzerError {
         NtfsReaderError::IOError(io) => format!("MFT read I/O error: {}", io),
         _ => format!("MFT error: {}", e),
     };
-    DiskAnalyzerError::Io(std::io::Error::new(
-        std::io::ErrorKind::Other,
-        msg,
-    ))
+    DiskAnalyzerError::Io(std::io::Error::new(std::io::ErrorKind::Other, msg))
 }
 
 /// Normalize path from ntfs-reader (e.g. `\\.\F:\dir\file` 或 `C:\dir\file`) to `F:\dir\file`，
@@ -106,7 +103,12 @@ fn normalize_ntfs_path(path_str: &str, drive: &str) -> String {
         }
     } else if path_str.len() >= 2 && path_str.as_bytes()[1] == b':' {
         let c = path_str.chars().next().unwrap();
-        if drive.chars().next().map(|d| c.eq_ignore_ascii_case(&d)).unwrap_or(false) {
+        if drive
+            .chars()
+            .next()
+            .map(|d| c.eq_ignore_ascii_case(&d))
+            .unwrap_or(false)
+        {
             let after = path_str[2..].trim_start_matches('\\');
             return if after.is_empty() {
                 format!(r"{}:\", drive)
@@ -190,12 +192,17 @@ pub fn scan_volume_mft_top_files(
 ) -> Result<Vec<TopFileEntry>, DiskAnalyzerError> {
     let path_buf = normalize_path(path);
     if !path_buf.exists() {
-        return Err(DiskAnalyzerError::InvalidPath(format!("path does not exist: {}", path)));
+        return Err(DiskAnalyzerError::InvalidPath(format!(
+            "path does not exist: {}",
+            path
+        )));
     }
     let path_buf = std::fs::canonicalize(&path_buf)
         .map_err(|e| DiskAnalyzerError::InvalidPath(format!("cannot resolve path: {}", e)))?;
     if !is_windows_volume_root(&path_buf) {
-        return Err(DiskAnalyzerError::InvalidPath("not a volume root".to_string()));
+        return Err(DiskAnalyzerError::InvalidPath(
+            "not a volume root".to_string(),
+        ));
     }
 
     let drive = drive_letter_from_volume_root(&path_buf).ok_or_else(|| {
@@ -224,7 +231,11 @@ pub fn scan_volume_mft_top_files(
         }
         let modified = info.modified.and_then(|t| {
             let s = t.unix_timestamp();
-            if s > 0 { Some(s as u64) } else { None }
+            if s > 0 {
+                Some(s as u64)
+            } else {
+                None
+            }
         });
         let c = counter.fetch_add(1, Ordering::Relaxed);
         if c > 0 && c % PROGRESS_EVERY == 0 {
@@ -245,7 +256,11 @@ pub fn scan_volume_mft_top_files(
 
     let mut list: Vec<_> = heap
         .into_iter()
-        .map(|Reverse((size, path, modified))| TopFileEntry { path, size, modified })
+        .map(|Reverse((size, path, modified))| TopFileEntry {
+            path,
+            size,
+            modified,
+        })
         .collect();
     list.sort_by(|a, b| b.size.cmp(&a.size));
     Ok(list)
@@ -271,7 +286,10 @@ fn compute_recursive_sizes(
         .iter()
         .map(|r| r.full_path.trim_end_matches('\\').to_string())
         .collect();
-    if !paths.iter().any(|p| p.eq_ignore_ascii_case(volume_root_trim)) {
+    if !paths
+        .iter()
+        .any(|p| p.eq_ignore_ascii_case(volume_root_trim))
+    {
         paths.push(volume_root_trim.to_string());
     }
     paths.sort();
@@ -314,15 +332,23 @@ pub fn scan_volume_mft(
     let start = Instant::now();
     let path_buf = normalize_path(path);
     if !path_buf.exists() {
-        return Err(DiskAnalyzerError::InvalidPath(format!("path does not exist: {}", path)));
+        return Err(DiskAnalyzerError::InvalidPath(format!(
+            "path does not exist: {}",
+            path
+        )));
     }
     let path_buf = std::fs::canonicalize(&path_buf)
         .map_err(|e| DiskAnalyzerError::InvalidPath(format!("cannot resolve path: {}", e)))?;
     if !is_windows_volume_root(&path_buf) {
-        return Err(DiskAnalyzerError::InvalidPath("not a volume root".to_string()));
+        return Err(DiskAnalyzerError::InvalidPath(
+            "not a volume root".to_string(),
+        ));
     }
 
-    let volume_root_str = path_buf.to_string_lossy().trim_end_matches('\\').to_string();
+    let volume_root_str = path_buf
+        .to_string_lossy()
+        .trim_end_matches('\\')
+        .to_string();
     let volume_root_str = if volume_root_str.ends_with(':') {
         format!("{}\\", volume_root_str)
     } else {
@@ -333,7 +359,11 @@ pub fn scan_volume_mft(
         DiskAnalyzerError::InvalidPath("cannot get drive letter from volume root".to_string())
     })?;
 
-    eprintln!("[scan:mft] starting MFT full scan for volume {} (drive {})", path_buf.display(), drive);
+    eprintln!(
+        "[scan:mft] starting MFT full scan for volume {} (drive {})",
+        path_buf.display(),
+        drive
+    );
     if let Some(ref cb) = progress {
         cb(0, "[scan:mft] opening volume...");
     }
@@ -344,7 +374,10 @@ pub fn scan_volume_mft(
     let volume = Volume::new(volume_path.as_str()).map_err(to_disk_analyzer_error)?;
     eprintln!("[scan:mft] volume opened: {} bytes", volume.volume_size);
     let mft = Mft::new(volume).map_err(to_disk_analyzer_error)?;
-    eprintln!("[scan:mft] MFT loaded into memory, max_records={}", mft.max_record);
+    eprintln!(
+        "[scan:mft] MFT loaded into memory, max_records={}",
+        mft.max_record
+    );
     let vol_trim_for_filter = format!("{}:", drive);
     let mut records: Vec<MftRecord> = Vec::with_capacity(2_000_000);
     let mut child_index: HashMap<String, Vec<usize>> = HashMap::new();
@@ -360,7 +393,11 @@ pub fn scan_volume_mft(
         }
         let modified = info.modified.and_then(|t| {
             let s = t.unix_timestamp();
-            if s > 0 { Some(s as u64) } else { None }
+            if s > 0 {
+                Some(s as u64)
+            } else {
+                None
+            }
         });
         let c = counter.fetch_add(1, Ordering::Relaxed);
         if c > 0 && c % PROGRESS_EVERY == 0 {
@@ -433,13 +470,31 @@ pub fn scan_volume_mft(
     if std::env::var("MFT_TIMING").is_ok() {
         let get_mft_ms = t_after_mft_read.duration_since(start).as_millis();
         let iterate_ms = t_after_iterate.duration_since(t_after_mft_read).as_millis();
-        let build_tree_ms = t_after_build_tree.duration_since(t_after_iterate).as_millis();
+        let build_tree_ms = t_after_build_tree
+            .duration_since(t_after_iterate)
+            .as_millis();
         let total_ms = scan_time_ms as u128;
         eprintln!("[MFT_TIMING] ---------- MFT scan phase timing (ms) ----------");
-        eprintln!("[MFT_TIMING] 1. get MFT content (Volume + Mft::new): {:>8} ms  ({:>5.1}%)", get_mft_ms, 100.0 * get_mft_ms as f64 / total_ms as f64);
-        eprintln!("[MFT_TIMING] 2. iterate_files + collect records:    {:>8} ms  ({:>5.1}%)", iterate_ms, 100.0 * iterate_ms as f64 / total_ms as f64);
-        eprintln!("[MFT_TIMING] 3. build_tree (parallel):              {:>8} ms  ({:>5.1}%)", build_tree_ms, 100.0 * build_tree_ms as f64 / total_ms as f64);
-        eprintln!("[MFT_TIMING] total:                                {:>8} ms  records={}", total_ms, records.len());
+        eprintln!(
+            "[MFT_TIMING] 1. get MFT content (Volume + Mft::new): {:>8} ms  ({:>5.1}%)",
+            get_mft_ms,
+            100.0 * get_mft_ms as f64 / total_ms as f64
+        );
+        eprintln!(
+            "[MFT_TIMING] 2. iterate_files + collect records:    {:>8} ms  ({:>5.1}%)",
+            iterate_ms,
+            100.0 * iterate_ms as f64 / total_ms as f64
+        );
+        eprintln!(
+            "[MFT_TIMING] 3. build_tree (parallel):              {:>8} ms  ({:>5.1}%)",
+            build_tree_ms,
+            100.0 * build_tree_ms as f64 / total_ms as f64
+        );
+        eprintln!(
+            "[MFT_TIMING] total:                                {:>8} ms  records={}",
+            total_ms,
+            records.len()
+        );
         eprintln!("[MFT_TIMING] ---------- parallelization notes ----------");
         eprintln!("[MFT_TIMING] - phase 1: disk I/O, not parallelizable.");
         eprintln!("[MFT_TIMING] - phase 2: ntfs-reader is single-threaded.");
@@ -481,7 +536,9 @@ fn build_tree_from_mft_records(
     display_count: u64,
 ) -> Result<(FileNode, u64, u64), DiskAnalyzerError> {
     let root_record = records.iter().find(|r| {
-        r.full_path.trim_end_matches('\\').eq_ignore_ascii_case(volume_root_trim)
+        r.full_path
+            .trim_end_matches('\\')
+            .eq_ignore_ascii_case(volume_root_trim)
     });
     let (root_size, root_modified) = root_record
         .map(|r| (r.size, r.modified))
@@ -493,7 +550,10 @@ fn build_tree_from_mft_records(
         .or_else(|| {
             child_index
                 .keys()
-                .find(|k| k.eq_ignore_ascii_case(volume_root_key) || k.eq_ignore_ascii_case(volume_root_trim))
+                .find(|k| {
+                    k.eq_ignore_ascii_case(volume_root_key)
+                        || k.eq_ignore_ascii_case(volume_root_trim)
+                })
                 .and_then(|k| child_index.get(k))
         })
         .cloned()
@@ -714,7 +774,9 @@ fn build_subtree_from_indices(
     if let Some(ref cb) = progress {
         let last = last_reported.load(Ordering::Relaxed);
         if cur.saturating_sub(last) >= BUILD_TREE_PROGRESS_EVERY
-            && last_reported.compare_exchange(last, cur, Ordering::Relaxed, Ordering::Relaxed).is_ok()
+            && last_reported
+                .compare_exchange(last, cur, Ordering::Relaxed, Ordering::Relaxed)
+                .is_ok()
         {
             cb(display_count, "[scan:mft] building tree...");
         }

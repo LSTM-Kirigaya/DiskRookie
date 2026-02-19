@@ -52,7 +52,7 @@ function ProviderIcon({ provider, size = 20 }: { provider: string; size?: number
 
 export function CloudStorageSelector({ open, onClose, onConfirm, availableConfigs, fileName, preselectedConfigs, onOpenSettings }: Props) {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
-  const [selectAll, setSelectAll] = useState(false)
+  const selectAll = selectedIds.size > 0 && selectedIds.size === availableConfigs.length
 
   // 初始化选中状态
   useEffect(() => {
@@ -61,13 +61,10 @@ export function CloudStorageSelector({ open, onClose, onConfirm, availableConfig
         preselectedConfigs.map(c => `${c.provider}-${c.name}`)
       )
       setSelectedIds(preselectedIds)
-      setSelectAll(preselectedIds.size === availableConfigs.length)
     } else if (open) {
-      // 对话框打开但没有预选时，清空选择
       setSelectedIds(new Set())
-      setSelectAll(false)
     }
-  }, [open, preselectedConfigs, availableConfigs])
+  }, [open, preselectedConfigs])
 
   const handleToggle = (config: CloudStorageConfig) => {
     const configId = `${config.provider}-${config.name}`
@@ -80,17 +77,14 @@ export function CloudStorageSelector({ open, onClose, onConfirm, availableConfig
     }
     
     setSelectedIds(newSelected)
-    setSelectAll(newSelected.size === availableConfigs.length)
   }
 
   const handleSelectAll = () => {
     if (selectAll) {
       setSelectedIds(new Set())
-      setSelectAll(false)
     } else {
       const allIds = new Set(availableConfigs.map(c => `${c.provider}-${c.name}`))
       setSelectedIds(allIds)
-      setSelectAll(true)
     }
   }
 
@@ -100,12 +94,10 @@ export function CloudStorageSelector({ open, onClose, onConfirm, availableConfig
     )
     onConfirm(selected)
     setSelectedIds(new Set())
-    setSelectAll(false)
   }
 
   const handleCancel = () => {
     setSelectedIds(new Set())
-    setSelectAll(false)
     onClose()
   }
 

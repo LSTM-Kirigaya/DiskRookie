@@ -38,17 +38,18 @@ fn ntfs_reader_c_drive_basic_info() {
     let volume = match Volume::new(volume_path.as_str()) {
         Ok(v) => v,
         Err(e) => {
-            eprintln!(
-                "[ntfs_reader] 无法打开 {} (需管理员权限): {}",
-                label, e
-            );
+            eprintln!("[ntfs_reader] 无法打开 {} (需管理员权限): {}", label, e);
             return;
         }
     };
 
     eprintln!("[ntfs_reader] ---------- {} 卷信息 ----------", label);
     eprintln!("  卷路径: {:?}", volume.path);
-    eprintln!("  卷大小: {} 字节 ({:.2} GiB)", volume.volume_size, volume.volume_size as f64 / (1024f64.powi(3)));
+    eprintln!(
+        "  卷大小: {} 字节 ({:.2} GiB)",
+        volume.volume_size,
+        volume.volume_size as f64 / (1024f64.powi(3))
+    );
     eprintln!("  簇大小: {} 字节", volume.cluster_size);
     eprintln!("  文件记录大小: {} 字节", volume.file_record_size);
     eprintln!("  MFT 位置: {} 字节", volume.mft_position);
