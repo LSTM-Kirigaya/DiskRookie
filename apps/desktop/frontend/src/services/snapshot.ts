@@ -123,7 +123,7 @@ export async function deleteSnapshot(id: string): Promise<void> {
  */
 export async function getSnapshot(id: string): Promise<Snapshot | null> {
   try {
-    const snapshot = await readJSON<Snapshot>(`snapshots/${id}.json`, null as any)
+    const snapshot = await readJSON<Snapshot | null>(`snapshots/${id}.json`, null)
     return snapshot
   } catch (error) {
     console.error(`加载快照失败: ${id}`, error)

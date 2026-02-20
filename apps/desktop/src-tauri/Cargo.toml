@@ -4,6 +4,9 @@ version = "0.2.1"
 edition = "2021"
 description = "AI Disk Analyzer - 智能磁盘分析工具"
 
+[lints]
+workspace = true
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 

@@ -49,9 +49,12 @@ function TaskItem({
 }) {
   const { t } = useTranslation()
   const config = statusConfig[task.status]
-  const providerInfo = task.targetConfigs[0] 
+  const providerInfo = task.targetConfigs[0]
     ? CLOUD_STORAGE_PROVIDERS.find(p => p.id === task.targetConfigs[0].provider)
     : null
+  const elapsedMs = task.startedAt && !task.completedAt && task.status === 'uploading'
+    ? Math.max(0, Date.now() - task.startedAt)
+    : 0
 
   return (
     <Box
@@ -140,10 +143,10 @@ function TaskItem({
               {formatTime(task.completedAt - task.startedAt)}
             </Typography>
           )}
-          {task.startedAt && !task.completedAt && task.status === 'uploading' && (
+          {elapsedMs > 0 && (
             <Typography variant="caption" sx={{ color: 'text.secondary', display: 'flex', alignItems: 'center', gap: 0.5 }}>
               <Clock size={12} />
-              {formatTime(Math.max(0, Date.now() - task.startedAt))}
+              {formatTime(elapsedMs)}
             </Typography>
           )}
           {/* 显示源文件删除状态 */}

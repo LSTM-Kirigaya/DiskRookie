@@ -357,7 +357,7 @@ export function ExpertMode({ onOpenSettings, loadedSnapshot, onSnapshotLoaded, s
     const [isAdmin, setIsAdmin] = useState<boolean | null>(false)
     const [hoverNode, setHoverNode] = useState<TreemapNode | null>(null)
     const [progressFiles, setProgressFiles] = useState(0)
-    const [_progressMessage, setProgressMessage] = useState('')
+    const [, setProgressMessage] = useState('')
     const [viewMode, setViewMode] = useState<'disk' | 'ai-prompt'>('disk')
     const [shallowDirs, setShallowDirs] = useState(true)
     const openedSettingsForStandardRef = useRef(false)

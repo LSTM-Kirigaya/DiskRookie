@@ -3,6 +3,9 @@ name = "ai-disk-executor"
 version = "0.1.0"
 edition = "2021"
 
+[lints]
+workspace = true
+
 [dependencies]
 ai-disk-common = { path = "../common" }
 ai-disk-domain = { path = "../domain-model" }

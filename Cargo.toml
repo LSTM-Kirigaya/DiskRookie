@@ -8,3 +8,29 @@ members = [
     "crates/executor",
     "apps/desktop/src-tauri",
 ]
+
+[workspace.lints.rust]
+unsafe_code = "warn"
+unused_imports = "warn"
+dead_code = "warn"
+
+[workspace.lints.clippy]
+# 正确性
+correctness = { level = "deny", priority = -1 }
+# 可疑代码
+suspicious = { level = "warn", priority = -1 }
+# 代码复杂度
+complexity = { level = "warn", priority = -1 }
+# 性能
+perf = { level = "warn", priority = -1 }
+# 代码风格
+style = { level = "warn", priority = -1 }
+
+# 额外启用的 lint
+cloned_instead_of_copied = "warn"
+inefficient_to_string = "warn"
+needless_pass_by_value = "warn"
+semicolon_if_nothing_returned = "warn"
+unnested_or_patterns = "warn"
+# Tauri 命令通常需要特定签名，放宽此项
+too_many_arguments = "allow"

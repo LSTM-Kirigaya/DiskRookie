@@ -1,0 +1,11 @@
+# Clippy 配置
+# 文档: https://doc.rust-lang.org/clippy/lint_configuration.html
+
+# 函数体认知复杂度上限
+cognitive-complexity-threshold = 30
+
+# 单个函数过多行数警告阈值
+too-many-lines-threshold = 200
+
+# 类型复杂度上限
+type-complexity-threshold = 300

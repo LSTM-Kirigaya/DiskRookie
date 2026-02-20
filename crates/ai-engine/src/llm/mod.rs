@@ -1,2 +1,2 @@
-pub mod openai;
 pub mod local;
+pub mod openai;

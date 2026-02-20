@@ -44,8 +44,10 @@ fn mft_record0_diagnostic() {
             panic!("Volume::new failed");
         }
     };
-    eprintln!("[mft_diag] 卷已打开: size={}, file_record_size={}, mft_position={}",
-        volume.volume_size, volume.file_record_size, volume.mft_position);
+    eprintln!(
+        "[mft_diag] 卷已打开: size={}, file_record_size={}, mft_position={}",
+        volume.volume_size, volume.file_record_size, volume.mft_position
+    );
 
     // 2) open_volume（再次打开，得到 reader）
     let mut reader = match ntfs_reader::aligned_reader::open_volume(volume.path.as_path()) {
@@ -74,27 +76,47 @@ fn mft_record0_diagnostic() {
     // 4) 打印前 64 字节（signature、USA 等）（packed 需拷贝到局部再打印）
     let usn_start = u16::from_le_bytes([data[4], data[5]]) as usize;
     let update_sequence_length = u16::from_le_bytes([data[6], data[7]]) as usize;
-    eprintln!("[mft_diag] 前 4 字节 (signature): {:?} (期望 FILE)", &data[0..4]);
+    eprintln!(
+        "[mft_diag] 前 4 字节 (signature): {:?} (期望 FILE)",
+        &data[0..4]
+    );
     eprintln!("[mft_diag] update_sequence_offset: {}", usn_start);
-    eprintln!("[mft_diag] update_sequence_length: {}", update_sequence_length);
+    eprintln!(
+        "[mft_diag] update_sequence_length: {}",
+        update_sequence_length
+    );
     let usa_start = usn_start + 2;
     let usa_end = usn_start.saturating_add(update_sequence_length.saturating_mul(2));
     eprintln!("[mft_diag] usa 范围: [{}..{})", usa_start, usa_end);
     if usa_end <= data.len() {
-        eprintln!("[mft_diag] USA 字节 (前 4 个): {:02x} {:02x} ...", data[usn_start], data[usn_start + 1]);
+        eprintln!(
+            "[mft_diag] USA 字节 (前 4 个): {:02x} {:02x} ...",
+            data[usn_start],
+            data[usn_start + 1]
+        );
     }
     // 每个 512 字节扇区末尾 2 字节应与 USA 匹配
     eprintln!("[mft_diag] 各扇区末尾 2 字节 vs USA:");
-    let usn0 = if usn_start + 2 <= data.len() { data[usn_start] } else { 0 };
-    let usn1 = if usn_start + 2 <= data.len() { data[usn_start + 1] } else { 0 };
+    let usn0 = if usn_start + 2 <= data.len() {
+        data[usn_start]
+    } else {
+        0
+    };
+    let usn1 = if usn_start + 2 <= data.len() {
+        data[usn_start + 1]
+    } else {
+        0
+    };
     let mut sector_off = SECTOR_SIZE - 2;
     let mut idx = 0;
     while sector_off + 2 <= data.len() && idx < (usa_end.saturating_sub(usa_start) / 2) {
         let d0 = data[sector_off];
         let d1 = data[sector_off + 1];
         let ok = d0 == usn0 && d1 == usn1;
-        eprintln!("[mft_diag]   sector {} (offset {}): {:02x} {:02x}  match={}",
-            idx, sector_off, d0, d1, ok);
+        eprintln!(
+            "[mft_diag]   sector {} (offset {}): {:02x} {:02x}  match={}",
+            idx, sector_off, d0, d1, ok
+        );
         sector_off += SECTOR_SIZE;
         idx += 1;
     }
@@ -118,7 +140,8 @@ fn mft_record0_diagnostic() {
 
     // 7) 与 Mft::get_record_fs 对比（同一 reader 已移动，需重新打开）
     drop(reader);
-    let mut reader2 = ntfs_reader::aligned_reader::open_volume(volume.path.as_path()).expect("open again");
+    let mut reader2 =
+        ntfs_reader::aligned_reader::open_volume(volume.path.as_path()).expect("open again");
     let record = Mft::get_record_fs(
         &mut reader2,
         volume.file_record_size as usize,
@@ -151,7 +174,10 @@ fn mft_record0_same_flow_as_app() {
                     return;
                 }
             };
-            eprintln!("[mft_app_flow] iter {} volume opened: {} bytes", iter, volume.volume_size);
+            eprintln!(
+                "[mft_app_flow] iter {} volume opened: {} bytes",
+                iter, volume.volume_size
+            );
 
             let mut reader = match ntfs_reader::aligned_reader::open_volume(volume.path.as_path()) {
                 Ok(r) => r,
@@ -166,7 +192,11 @@ fn mft_record0_same_flow_as_app() {
                 volume.mft_position,
             ) {
                 Ok(record) => {
-                    eprintln!("[mft_app_flow] iter {} get_record_fs 成功, len={}", iter, record.len());
+                    eprintln!(
+                        "[mft_app_flow] iter {} get_record_fs 成功, len={}",
+                        iter,
+                        record.len()
+                    );
                     let _ = tx.send(Ok(()));
                 }
                 Err(e) => {
@@ -192,8 +222,14 @@ fn mft_record0_same_flow_as_app() {
 #[cfg(windows)]
 fn mft_scan_volume_mft_with_progress() {
     let path = volume_path();
-    let path_str = format!("{}:\\", path.trim_end_matches(':').trim_start_matches(r"\\.\"));
-    eprintln!("[mft_scan] 调用 scan_volume_mft({:?}, progress, true) 共 2 次", path_str);
+    let path_str = format!(
+        "{}:\\",
+        path.trim_end_matches(':').trim_start_matches(r"\\.\")
+    );
+    eprintln!(
+        "[mft_scan] 调用 scan_volume_mft({:?}, progress, true) 共 2 次",
+        path_str
+    );
 
     let progress = std::sync::Arc::new(Box::new(|count: u64, msg: &str| {
         eprintln!("[mft_scan] progress: {} | {}", count, msg);
@@ -202,7 +238,10 @@ fn mft_scan_volume_mft_with_progress() {
     for iter in 0..2 {
         eprintln!("[mft_scan] ---------- iter {} ----------", iter);
         match scan_volume_mft(path_str.as_str(), Some(progress.clone()), true) {
-            Ok(result) => eprintln!("[mft_scan] iter {} 成功: file_count={}", iter, result.file_count),
+            Ok(result) => eprintln!(
+                "[mft_scan] iter {} 成功: file_count={}",
+                iter, result.file_count
+            ),
             Err(e) => panic!("[mft_scan] iter {} 失败: {}", iter, e),
         }
     }
