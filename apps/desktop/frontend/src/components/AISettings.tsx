@@ -167,7 +167,8 @@ export function AISettings({ onClose, initialTab = 0, onSaved, themePreference: 
     })
   }, [])
 
-  // 当当前厂商的 API Key 和 URL 都填写后，自动获取模型列表；加载完成后默认选中第一个模型
+  // 当当前厂商的 API Key 和 URL 都填写后，自动获取模型列表
+  // 注意：这里不应覆盖用户已保存的 model，兜底切换逻辑由下方 effect 处理
   useEffect(() => {
     const keyForUrl = (settings.providerApiKeys ?? {})[getPresetId(settings.apiUrl, customApiPresets)] ?? ''
     const loadModels = async () => {
@@ -176,11 +177,6 @@ export function AISettings({ onClose, initialTab = 0, onSaved, themePreference: 
         try {
           const models = await fetchAvailableModels(settings.apiUrl, keyForUrl)
           setAvailableModels(models)
-          if (models.length > 0) {
-            const sorted = [...models].sort((a, b) => a.id.localeCompare(b.id))
-            setSettings(s => ({ ...s, model: sorted[0].id }))
-            setCustomModel('')
-          }
         } catch (error) {
           console.error('Failed to load models:', error)
           setAvailableModels([])
