@@ -45,9 +45,20 @@ const PROMPT_INSTRUCTION_FILE = 'prompt-instruction.txt'
 
 /** Windows 下将 "C:" 规范为 "C:\"，便于后端识别为卷根并走 MFT 全量扫描 */
 function normalizeScanPath(p: string): string {
-  const s = p.trim().replace(/\//g, '\\')
-  if (/^[A-Za-z]:$/.test(s)) return s + '\\'
-  return s
+  const trimmed = p.trim()
+  if (!trimmed) return trimmed
+
+  // Unix/macOS 绝对路径保持原样，避免 "/Users/..." 被错误转成 "\Users\..."
+  if (trimmed.startsWith('/')) return trimmed
+
+  // 仅对 Windows 风格路径做规范化
+  if (/^[A-Za-z]:/.test(trimmed) || trimmed.startsWith('\\\\')) {
+    const normalized = trimmed.replace(/\//g, '\\')
+    if (/^[A-Za-z]:$/.test(normalized)) return normalized + '\\'
+    return normalized
+  }
+
+  return trimmed
 }
 
 const DEFAULT_PROMPT_INSTRUCTION = '请根据以上占用，简要指出可安全清理或迁移的大项，并给出操作建议。'
