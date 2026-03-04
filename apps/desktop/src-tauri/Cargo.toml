@@ -1,6 +1,6 @@
 [package]
 name = "ai-disk-desktop"
-version = "0.2.1"
+version = "0.2.2"
 edition = "2021"
 description = "AI Disk Analyzer - 智能磁盘分析工具"
 
