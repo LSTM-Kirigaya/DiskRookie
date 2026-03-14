@@ -1218,15 +1218,18 @@ export function ExpertMode({ onOpenSettings, loadedSnapshot, onSnapshotLoaded, s
 
                                         const deleteSize = deleteSuggestions.reduce((sum, s) => sum + parseSize(s.size), 0)
                                         const moveSize = moveSuggestions.reduce((sum, s) => sum + parseSize(s.size), 0)
-                                        // 与当前卷容量对比：优先用 volume_total_bytes，无卷信息时回退到扫描总大小
-                                        const volumeCapacity = (result?.volume_total_bytes != null && result.volume_total_bytes > 0)
+                                        
+                                        // 判断是否为整盘扫描：Windows 如 "C:\"，Unix/macOS 如 "/"
+                                        const isVolumeScan = /^[A-Za-z]:[\\/]$/.test(path) || path === '/'
+                                        // 百分比计算基准：整盘扫描用卷容量，文件夹扫描用该文件夹总大小
+                                        const baseCapacity = isVolumeScan && result?.volume_total_bytes != null && result.volume_total_bytes > 0
                                             ? result.volume_total_bytes
                                             : (result?.total_size || 1)
-                                        const remainSize = Math.max(0, volumeCapacity - deleteSize - moveSize)
-                                        // 删除/迁移/保留占比 = 各自容量 / 卷容量，展示时上限 100%
-                                        const deletePercent = Math.min(100, (deleteSize / volumeCapacity) * 100).toFixed(1)
-                                        const movePercent = Math.min(100, (moveSize / volumeCapacity) * 100).toFixed(1)
-                                        const remainPercent = Math.min(100, (remainSize / volumeCapacity) * 100).toFixed(1)
+                                        const remainSize = Math.max(0, baseCapacity - deleteSize - moveSize)
+                                        // 删除/迁移/保留占比 = 各自容量 / 基准容量，展示时上限 100%
+                                        const deletePercent = Math.min(100, (deleteSize / baseCapacity) * 100).toFixed(1)
+                                        const movePercent = Math.min(100, (moveSize / baseCapacity) * 100).toFixed(1)
+                                        const remainPercent = Math.min(100, (remainSize / baseCapacity) * 100).toFixed(1)
 
                                         // 检测是否为暗色模式
                                         const isDarkMode = document.documentElement.classList.contains('dark')

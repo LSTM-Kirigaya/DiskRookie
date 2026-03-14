@@ -1,7 +1,7 @@
 {
   "name": "ai-disk-desktop",
   "private": true,
-  "version": "beta 0.1.3",
+  "version": "0.2.3",
   "type": "module",
   "scripts": {
     "dev": "tauri dev",

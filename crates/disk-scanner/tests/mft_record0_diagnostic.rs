@@ -128,15 +128,9 @@ fn mft_record0_diagnostic() {
         eprintln!("[mft_diag] 因 is_valid 为 false，get_record_fs 会返回 InvalidMftRecord");
     }
 
-    // 6) fixup_record
-    let fixup_result = Mft::fixup_record(0, &mut data);
-    match &fixup_result {
-        Ok(()) => eprintln!("[mft_diag] fixup_record(0) 成功"),
-        Err(e) => eprintln!("[mft_diag] fixup_record(0) 失败: {}", e),
-    }
-    if fixup_result.is_err() {
-        panic!("fixup failed");
-    }
+    // 6) fixup_record - 已移除：Mft::fixup_record 为 ntfs-reader 私有 API
+    // let fixup_result = Mft::fixup_record(0, &mut data);
+    // ...
 
     // 7) 与 Mft::get_record_fs 对比（同一 reader 已移动，需重新打开）
     drop(reader);

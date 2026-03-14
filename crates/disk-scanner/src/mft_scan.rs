@@ -384,11 +384,17 @@ pub fn scan_volume_mft(
     let mut direct_sizes: HashMap<String, u64> = HashMap::new();
     let mut cache = HashMapCache::default();
     let counter = AtomicU64::new(0);
+    let filtered_count = AtomicU64::new(0);
+    let filtered_file_size = AtomicU64::new(0); // 仅非目录，用于 total_size
     mft.iterate_files(|file| {
         let info = FileInfo::with_cache(&mft, file, &mut cache);
         let path_str = info.path.to_string_lossy();
         let full_path = normalize_ntfs_path(&path_str, &drive);
         if !path_under_volume_ascii(&full_path, &vol_trim_for_filter) {
+            filtered_count.fetch_add(1, Ordering::Relaxed);
+            if !info.is_directory {
+                filtered_file_size.fetch_add(info.size, Ordering::Relaxed);
+            }
             return;
         }
         let modified = info.modified.and_then(|t| {
@@ -426,6 +432,15 @@ pub fn scan_volume_mft(
             .or_insert(s);
     });
     let n_records = counter.load(Ordering::Relaxed);
+    let n_filtered = filtered_count.load(Ordering::Relaxed);
+    let size_filtered = filtered_file_size.load(Ordering::Relaxed);
+    if n_filtered > 0 || size_filtered > 0 {
+        eprintln!(
+            "[scan:mft] path 过滤: {} 条记录、{} 字节(文件)被排除",
+            n_filtered,
+            size_filtered
+        );
+    }
     if let Some(ref cb) = progress {
         cb(n_records, &volume_root_str);
     }
@@ -437,6 +452,13 @@ pub fn scan_volume_mft(
         &volume_root_trim,
         &volume_root_key,
     );
+
+    // 所有文件（非目录）的 size 之和；path 过滤的不计入（避免重复/膨胀）
+    let sum_all_file_sizes: u64 = records
+        .iter()
+        .filter(|r| !r.is_dir)
+        .map(|r| r.size)
+        .sum();
     let t_after_mft_read = Instant::now();
     let t_after_iterate = t_after_mft_read;
 
@@ -448,7 +470,7 @@ pub fn scan_volume_mft(
         .unwrap_or_else(|| path.to_string());
     let root_path_str = path_buf.display().to_string();
 
-    let (root, file_count, total_size) = build_tree_from_mft_records(
+    let (root, file_count, _tree_total) = build_tree_from_mft_records(
         &records,
         &child_index,
         &recursive_sizes,
@@ -462,6 +484,8 @@ pub fn scan_volume_mft(
     )?;
     let t_after_build_tree = Instant::now();
     let scan_time_ms = start.elapsed().as_millis() as u64;
+    // total_size 使用所有文件 size 之和，与树结构无关，最准确
+    let total_size = sum_all_file_sizes;
     eprintln!(
         "[scan:mft] build_tree done: file_count={}, total_size={}, elapsed_ms={}",
         file_count, total_size, scan_time_ms
@@ -616,6 +640,14 @@ fn build_tree_from_mft_records(
         file_count += count_nodes(c);
     }
 
+    // total_size 必须基于 recursive_sizes 中卷根的递归总大小，而非建树求和。
+    // 建树时因 MAX_CHILDREN_PER_DIR 截断，求和会漏掉大量子项；recursive_sizes 基于全部 records 计算，准确。
+    let total_size = recursive_sizes
+        .get(volume_root_trim)
+        .or_else(|| recursive_sizes.get(volume_root_key.trim_end_matches('\\')))
+        .copied()
+        .unwrap_or(total_size);
+
     let root = FileNode {
         path: root_path_str.to_string(),
         name: root_name.to_string(),
@@ -769,6 +801,17 @@ fn build_subtree_from_indices(
             break;
         }
     }
+
+    // 若因 MAX_CHILDREN_PER_DIR 截断，size 只包含前 500 个子项之和，会丢失大量数据。
+    // 使用 recursive_sizes 获取该目录的真实递归总大小，确保 total_size 正确。
+    let size = if children_indices.len() > children.len() {
+        recursive_sizes
+            .get(path_prefix.trim_end_matches('\\'))
+            .copied()
+            .unwrap_or(size)
+    } else {
+        size
+    };
 
     let cur = nodes_built.fetch_add(1, Ordering::Relaxed) + 1;
     if let Some(ref cb) = progress {
