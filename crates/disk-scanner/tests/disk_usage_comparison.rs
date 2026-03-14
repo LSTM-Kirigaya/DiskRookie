@@ -97,17 +97,30 @@ fn disk_usage_comparison() {
     let system_used = volume_total.saturating_sub(volume_free);
 
     eprintln!("---------- 系统 API (GetDiskFreeSpaceExW) ----------");
-    eprintln!("  卷总容量:     {} ({})", format_bytes(volume_total), volume_total);
-    eprintln!("  卷剩余空间:   {} ({})", format_bytes(volume_free), volume_free);
-    eprintln!("  系统已占用:   {} ({})", format_bytes(system_used), system_used);
+    eprintln!(
+        "  卷总容量:     {} ({})",
+        format_bytes(volume_total),
+        volume_total
+    );
+    eprintln!(
+        "  卷剩余空间:   {} ({})",
+        format_bytes(volume_free),
+        volume_free
+    );
+    eprintln!(
+        "  系统已占用:   {} ({})",
+        format_bytes(system_used),
+        system_used
+    );
     eprintln!();
 
     // 2. 执行扫描（MFT 或普通 walk）
-    let progress = Arc::new(Box::new(|_count: u64, _path: &str| {}) as Box<dyn Fn(u64, &str) + Send + Sync>);
+    let progress =
+        Arc::new(Box::new(|_count: u64, _path: &str| {}) as Box<dyn Fn(u64, &str) + Send + Sync>);
     let (result, used_mft) = match scan_path_with_progress(
         &scan_path,
         Some(&progress),
-        true,  // shallow_dirs
+        true, // shallow_dirs
         use_mft,
     ) {
         Ok(r) => r,
@@ -121,9 +134,20 @@ fn disk_usage_comparison() {
     let file_count = result.file_count;
 
     eprintln!("---------- 扫描结果 ----------");
-    eprintln!("  扫描方式:     {}", if used_mft { "MFT" } else { "普通目录遍历" });
+    eprintln!(
+        "  扫描方式:     {}",
+        if used_mft {
+            "MFT"
+        } else {
+            "普通目录遍历"
+        }
+    );
     eprintln!("  文件数量:     {}", file_count);
-    eprintln!("  扫描总大小:   {} ({})", format_bytes(scan_total_size), scan_total_size);
+    eprintln!(
+        "  扫描总大小:   {} ({})",
+        format_bytes(scan_total_size),
+        scan_total_size
+    );
     eprintln!();
 
     // 3. 对比
@@ -139,8 +163,16 @@ fn disk_usage_comparison() {
         0.0
     };
 
-    eprintln!("  系统已占用:   {} ({})", format_bytes(system_used), system_used);
-    eprintln!("  扫描总大小:   {} ({})", format_bytes(scan_total_size), scan_total_size);
+    eprintln!(
+        "  系统已占用:   {} ({})",
+        format_bytes(system_used),
+        system_used
+    );
+    eprintln!(
+        "  扫描总大小:   {} ({})",
+        format_bytes(scan_total_size),
+        scan_total_size
+    );
     eprintln!("  绝对差异:     {} ({:.2}%)", format_bytes(diff), diff_pct);
     eprintln!();
 
@@ -149,7 +181,10 @@ fn disk_usage_comparison() {
         // 快速模式：扫描子目录，扫描结果应 <= 卷已占用（子集不可能超过全集）
         let subset_ok = scan_total_size <= system_used || scan_total_size <= volume_total;
         if subset_ok {
-            eprintln!("[通过] 快速模式：子目录扫描大小 {} 在卷容量范围内", format_bytes(scan_total_size));
+            eprintln!(
+                "[通过] 快速模式：子目录扫描大小 {} 在卷容量范围内",
+                format_bytes(scan_total_size)
+            );
         } else {
             eprintln!(
                 "[失败] 快速模式：子目录扫描大小 {} 超过卷已占用 {}，存在逻辑错误",
@@ -196,6 +231,8 @@ fn disk_usage_comparison() {
     assert!(
         passed,
         "磁盘占用率对比失败: 系统已占用={}, 扫描总大小={}, gap={}",
-        system_used, scan_total_size, format_bytes(system_used.saturating_sub(scan_total_size))
+        system_used,
+        scan_total_size,
+        format_bytes(system_used.saturating_sub(scan_total_size))
     );
 }

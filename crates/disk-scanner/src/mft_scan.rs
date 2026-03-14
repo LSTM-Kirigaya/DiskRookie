@@ -437,8 +437,7 @@ pub fn scan_volume_mft(
     if n_filtered > 0 || size_filtered > 0 {
         eprintln!(
             "[scan:mft] path 过滤: {} 条记录、{} 字节(文件)被排除",
-            n_filtered,
-            size_filtered
+            n_filtered, size_filtered
         );
     }
     if let Some(ref cb) = progress {
@@ -454,11 +453,7 @@ pub fn scan_volume_mft(
     );
 
     // 所有文件（非目录）的 size 之和；path 过滤的不计入（避免重复/膨胀）
-    let sum_all_file_sizes: u64 = records
-        .iter()
-        .filter(|r| !r.is_dir)
-        .map(|r| r.size)
-        .sum();
+    let sum_all_file_sizes: u64 = records.iter().filter(|r| !r.is_dir).map(|r| r.size).sum();
     let t_after_mft_read = Instant::now();
     let t_after_iterate = t_after_mft_read;
 
