@@ -1,8 +1,15 @@
 // AI 磁盘分析服务 - Function Calling 实现
 
 import { invoke } from '@tauri-apps/api/core'
-import { loadSettings, resolveEffectiveApiKey, type ChatMessage, type FunctionTool, type ChatCompletionResponse } from './ai'
-import { applyKimiCodingAgentHeaders } from './kimi-oauth'
+import {
+  loadSettings,
+  resolveEffectiveApiKey,
+  bearerAuthorization,
+  type ChatMessage,
+  type FunctionTool,
+  type ChatCompletionResponse,
+} from './ai'
+import { applyKimiCodingAgentHeaders, stripBearerPrefix } from './kimi-oauth'
 import { httpFetch } from './http'
 import i18n from '../i18n'
 
@@ -243,11 +250,11 @@ Please carefully analyze the data and provide reasonable, safe suggestions. All 
     
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
-      'Authorization': `Bearer ${apiKey}`,
+      Authorization: bearerAuthorization(apiKey),
     }
 
     if (settings.apiUrl.includes('anthropic')) {
-      headers['x-api-key'] = apiKey
+      headers['x-api-key'] = stripBearerPrefix(apiKey)
       headers['anthropic-version'] = '2023-06-01'
       delete headers['Authorization']
     } else {

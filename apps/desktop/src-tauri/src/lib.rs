@@ -1,9 +1,12 @@
 mod commands;
+mod panic_hook;
 
 use commands::oauth::OAuthState;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    panic_hook::install_broken_pipe_safe_panic_hook();
+
     // 初始化日志系统（过滤 tao/winit 事件循环的 WARN，避免刷屏）
     env_logger::Builder::from_default_env()
         .filter_level(log::LevelFilter::Info)

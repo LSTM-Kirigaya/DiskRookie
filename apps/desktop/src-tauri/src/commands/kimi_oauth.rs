@@ -79,10 +79,7 @@ pub async fn kimi_code_poll_token(device_code: String) -> Result<KimiPollTokenRe
         .form(&[
             ("client_id", KIMI_CODE_CLIENT_ID),
             ("device_code", &device_code),
-            (
-                "grant_type",
-                "urn:ietf:params:oauth:grant-type:device_code",
-            ),
+            ("grant_type", "urn:ietf:params:oauth:grant-type:device_code"),
         ])
         .send()
         .await

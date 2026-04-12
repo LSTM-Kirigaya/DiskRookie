@@ -378,7 +378,7 @@ pub fn scan_path_with_progress(
     let _ = use_mft; // used only on windows
     #[cfg(windows)]
     if use_mft && crate::mft_scan::is_windows_volume_root(&path_buf) {
-        eprintln!(
+        stderr_ln!(
             "[scan] path is volume root, attempting MFT full scan: {}",
             path_buf.display()
         );
@@ -386,7 +386,7 @@ pub fn scan_path_with_progress(
             Ok(result) => return Ok((result, true)),
             Err(e) => {
                 let msg: String = e.to_string();
-                eprintln!(
+                stderr_ln!(
                     "[scan] MFT scan unavailable, falling back to normal walk. reason: {} (on Windows, reading $MFT often needs admin)",
                     msg
                 );
@@ -395,7 +395,7 @@ pub fn scan_path_with_progress(
         }
     }
 
-    eprintln!("[scan] using normal directory walk: {}", path_buf.display());
+    stderr_ln!("[scan] using normal directory walk: {}", path_buf.display());
     let name = path_buf
         .file_name()
         .and_then(|n| n.to_str())

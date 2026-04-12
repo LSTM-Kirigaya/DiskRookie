@@ -1,3 +1,6 @@
+#[macro_use]
+mod stderr_macros;
+
 pub mod filters;
 pub mod node;
 pub mod scanner;

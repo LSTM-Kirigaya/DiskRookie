@@ -52,6 +52,7 @@ import {
   loadKimiOAuthToken,
   clearKimiOAuthToken,
   runKimiDeviceLogin,
+  isKimiCodingApiUrl,
 } from '../services/kimi-oauth'
 import { loadAppSettings, saveAppSettings, type AppSettings } from '../services/settings'
 import { CloudStorageSettings } from './CloudStorageSettings'
@@ -179,10 +180,11 @@ export function AISettings({ onClose, initialTab = 0, onSaved, themePreference: 
     })
   }, [])
 
-  // Kimi OAuth 是否已有令牌（用于展示与拉模型列表）
+  // Kimi OAuth 是否已有令牌（用于展示与拉模型列表；自定义 URL 指向 Kimi Coding 时同样生效）
   useEffect(() => {
     const pid = getPresetId(settings.apiUrl, customApiPresets)
-    if (pid !== KIMI_CODE_PRESET_ID) {
+    const isKimiEndpoint = pid === KIMI_CODE_PRESET_ID || isKimiCodingApiUrl(settings.apiUrl)
+    if (!isKimiEndpoint) {
       setKimiHasOAuth(false)
       return
     }
@@ -285,8 +287,10 @@ export function AISettings({ onClose, initialTab = 0, onSaved, themePreference: 
   // 当前选中的厂商对应的 API Key（独立存储，切换厂商显示各自的 key）
   const currentPresetId = getPresetId(settings.apiUrl, customApiPresets)
   const currentApiKey = (settings.providerApiKeys ?? {})[currentPresetId] ?? ''
+  const isKimiCodeEndpoint =
+    currentPresetId === KIMI_CODE_PRESET_ID || isKimiCodingApiUrl(settings.apiUrl)
   const hasCredential =
-    currentPresetId === KIMI_CODE_PRESET_ID
+    isKimiCodeEndpoint
       ? currentApiKey.trim() !== '' || kimiHasOAuth
       : currentApiKey.trim() !== ''
 
@@ -424,10 +428,10 @@ export function AISettings({ onClose, initialTab = 0, onSaved, themePreference: 
               {/* API Key / Kimi OAuth */}
               <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
                 <Typography variant="caption" sx={{ fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.1em', color: 'text.secondary' }}>
-                  {currentPresetId === KIMI_CODE_PRESET_ID ? t('settings.kimiCodeAuth') : t('settings.apiKey')}
+                  {isKimiCodeEndpoint ? t('settings.kimiCodeAuth') : t('settings.apiKey')}
                 </Typography>
 
-                {currentPresetId === KIMI_CODE_PRESET_ID && (
+                {isKimiCodeEndpoint && (
                   <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1, p: 1.5, borderRadius: 2, border: '1px solid', borderColor: 'divider', bgcolor: 'action.hover' }}>
                     <Typography variant="body2" sx={{ fontSize: '12px', color: 'text.secondary' }}>
                       {kimiHasOAuth ? t('settings.kimiCodeLoggedIn') : t('settings.kimiCodeOAuthHint')}
@@ -454,6 +458,23 @@ export function AISettings({ onClose, initialTab = 0, onSaved, themePreference: 
                                 }
                               },
                             })
+                            // 清除该端点下曾保存的手动 Key，避免继续覆盖 OAuth（与 resolveEffectiveApiKey 行为一致）
+                            const loaded = await loadSettings()
+                            const pid = getPresetId(loaded.apiUrl, loaded.customApiPresets ?? [])
+                            const isKimi =
+                              pid === KIMI_CODE_PRESET_ID || isKimiCodingApiUrl(loaded.apiUrl)
+                            if (isKimi && loaded.providerApiKeys?.[pid]?.trim()) {
+                              const keys = { ...(loaded.providerApiKeys ?? {}) }
+                              delete keys[pid]
+                              await saveSettings({
+                                ...loaded,
+                                providerApiKeys: keys,
+                                apiKey: keys[pid] ?? '',
+                              })
+                              const fresh = await loadSettings()
+                              setSettings(fresh)
+                              setCustomApiPresets(fresh.customApiPresets ?? [])
+                            }
                             setKimiAuthTick(x => x + 1)
                             showNotification(t('settings.kimiCodeLoginOk'), '')
                             onSaved?.()
@@ -495,7 +516,7 @@ export function AISettings({ onClose, initialTab = 0, onSaved, themePreference: 
                 )}
 
                 {/* Kimi 已通过 OAuth 登录时不显示手动 API Key，避免重复说明；未登录或非 Kimi 预设仍显示 */}
-                {(currentPresetId !== KIMI_CODE_PRESET_ID || !kimiHasOAuth) && (
+                {(!isKimiCodeEndpoint || !kimiHasOAuth) && (
                   <>
                     <TextField
                       fullWidth
@@ -506,7 +527,7 @@ export function AISettings({ onClose, initialTab = 0, onSaved, themePreference: 
                         ...s,
                         providerApiKeys: { ...(s.providerApiKeys ?? {}), [getPresetId(s.apiUrl, customApiPresets)]: e.target.value },
                       }))}
-                      placeholder={currentPresetId === KIMI_CODE_PRESET_ID ? t('settings.kimiCodeKeyPlaceholder') : t('settings.inputApiKey')}
+                      placeholder={isKimiCodeEndpoint ? t('settings.kimiCodeKeyPlaceholder') : t('settings.inputApiKey')}
                       InputProps={{
                         endAdornment: (
                           <InputAdornment position="end">
@@ -525,7 +546,7 @@ export function AISettings({ onClose, initialTab = 0, onSaved, themePreference: 
                     />
                     <FormHelperText sx={{ fontSize: '10px', display: 'flex', alignItems: 'center', gap: 0.5, m: 0 }}>
                       <AlertCircle className="w-3 h-3" />
-                      {currentPresetId === KIMI_CODE_PRESET_ID ? t('settings.kimiCodeKeyHint') : t('settings.apiKeyHint')}
+                      {isKimiCodeEndpoint ? t('settings.kimiCodeKeyHint') : t('settings.apiKeyHint')}
                     </FormHelperText>
                   </>
                 )}

@@ -359,7 +359,7 @@ pub fn scan_volume_mft(
         DiskAnalyzerError::InvalidPath("cannot get drive letter from volume root".to_string())
     })?;
 
-    eprintln!(
+    stderr_ln!(
         "[scan:mft] starting MFT full scan for volume {} (drive {})",
         path_buf.display(),
         drive
@@ -372,9 +372,9 @@ pub fn scan_volume_mft(
     let volume_root_key = format!(r"{}:\", drive);
     // 使用上游 ntfs-reader API：Mft::new 一次性加载 $MFT，再 iterate_files 枚举。
     let volume = Volume::new(volume_path.as_str()).map_err(to_disk_analyzer_error)?;
-    eprintln!("[scan:mft] volume opened: {} bytes", volume.volume_size);
+    stderr_ln!("[scan:mft] volume opened: {} bytes", volume.volume_size);
     let mft = Mft::new(volume).map_err(to_disk_analyzer_error)?;
-    eprintln!(
+    stderr_ln!(
         "[scan:mft] MFT loaded into memory, max_records={}",
         mft.max_record
     );
@@ -435,7 +435,7 @@ pub fn scan_volume_mft(
     let n_filtered = filtered_count.load(Ordering::Relaxed);
     let size_filtered = filtered_file_size.load(Ordering::Relaxed);
     if n_filtered > 0 || size_filtered > 0 {
-        eprintln!(
+        stderr_ln!(
             "[scan:mft] path 过滤: {} 条记录、{} 字节(文件)被排除",
             n_filtered, size_filtered
         );
@@ -481,9 +481,11 @@ pub fn scan_volume_mft(
     let scan_time_ms = start.elapsed().as_millis() as u64;
     // total_size 使用所有文件 size 之和，与树结构无关，最准确
     let total_size = sum_all_file_sizes;
-    eprintln!(
+    stderr_ln!(
         "[scan:mft] build_tree done: file_count={}, total_size={}, elapsed_ms={}",
-        file_count, total_size, scan_time_ms
+        file_count,
+        total_size,
+        scan_time_ms
     );
 
     if std::env::var("MFT_TIMING").is_ok() {
@@ -493,31 +495,31 @@ pub fn scan_volume_mft(
             .duration_since(t_after_iterate)
             .as_millis();
         let total_ms = scan_time_ms as u128;
-        eprintln!("[MFT_TIMING] ---------- MFT scan phase timing (ms) ----------");
-        eprintln!(
+        stderr_ln!("[MFT_TIMING] ---------- MFT scan phase timing (ms) ----------");
+        stderr_ln!(
             "[MFT_TIMING] 1. get MFT content (Volume + Mft::new): {:>8} ms  ({:>5.1}%)",
             get_mft_ms,
             100.0 * get_mft_ms as f64 / total_ms as f64
         );
-        eprintln!(
+        stderr_ln!(
             "[MFT_TIMING] 2. iterate_files + collect records:    {:>8} ms  ({:>5.1}%)",
             iterate_ms,
             100.0 * iterate_ms as f64 / total_ms as f64
         );
-        eprintln!(
+        stderr_ln!(
             "[MFT_TIMING] 3. build_tree (parallel):              {:>8} ms  ({:>5.1}%)",
             build_tree_ms,
             100.0 * build_tree_ms as f64 / total_ms as f64
         );
-        eprintln!(
+        stderr_ln!(
             "[MFT_TIMING] total:                                {:>8} ms  records={}",
             total_ms,
             records.len()
         );
-        eprintln!("[MFT_TIMING] ---------- parallelization notes ----------");
-        eprintln!("[MFT_TIMING] - phase 1: disk I/O, not parallelizable.");
-        eprintln!("[MFT_TIMING] - phase 2: ntfs-reader is single-threaded.");
-        eprintln!("[MFT_TIMING] - phase 3: already parallel (chunked map/index + par_iter).");
+        stderr_ln!("[MFT_TIMING] ---------- parallelization notes ----------");
+        stderr_ln!("[MFT_TIMING] - phase 1: disk I/O, not parallelizable.");
+        stderr_ln!("[MFT_TIMING] - phase 2: ntfs-reader is single-threaded.");
+        stderr_ln!("[MFT_TIMING] - phase 3: already parallel (chunked map/index + par_iter).");
     }
 
     let (volume_total_bytes, volume_free_bytes) =

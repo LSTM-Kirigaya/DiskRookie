@@ -431,11 +431,15 @@ export function ExpertMode({ onOpenSettings, loadedSnapshot, onSnapshotLoaded, s
             const res = await invoke<ScanResult>('scan_path_command', { path: pathToScan, shallowDirs, useMft })
             setResult(res); setStatus('done');
 
-            // 标准模式：扫描完成后自动调用 AI 分析，表格行数使用用户设置并已保存的本地位（与设置中的「Prompt 文件数量」一致）
+            // 标准模式：扫描完成后自动调用 AI 分析（与设置里「测试连接」相同：resolveEffectiveApiKey + Kimi Coding 时带 OAuth / User-Agent）
             if (isAdmin === false) {
                 setAiAnalyzing(true)
                 setAiProgress(t('aiAnalysis.preparing'))
                 try {
+                    const aiSettings = await loadSettings()
+                    if (!(await resolveEffectiveApiKey(aiSettings))?.trim()) {
+                        throw new Error('请先在设置中配置 API Key，或完成 Kimi Code 登录')
+                    }
                     const summary = await buildFileListSummary(res, appSettings.promptFileCount)
                     const aiResult = await analyzeWithAI(summary, (msg) => setAiProgress(msg))
                     setAnalysisResult(aiResult)
