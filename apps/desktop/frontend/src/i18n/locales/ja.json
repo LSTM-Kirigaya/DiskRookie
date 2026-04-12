@@ -273,7 +273,20 @@
     "saveAsPresetHint": "現在のAPI URLをプリセットとして保存し、次回からドロップダウンで選択できます。接続テスト後に保存することをおすすめします。",
     "presetNamePlaceholder": "プリセット名を入力（例：My DeepSeek）",
     "saveAsPresetSuccess": "API URLプリセットとして保存しました",
-    "customApiPreset": "カスタムサービス"
+    "customApiPreset": "カスタムサービス",
+    "kimiCodeAuth": "Kimi Code ログイン",
+    "kimiCodeOAuthHint": "ブラウザでKimiアカウントのデバイス認証（OAuth）を行います。API Keyは不要です。",
+    "kimiCodeLoggedIn": "Kimiでサインイン済み。トークンはローカルに保存されます。",
+    "kimiCodeUserCode": "ブラウザが開かない場合は検証ページを手動で開いてください。ユーザーコード：{{code}}",
+    "kimiCodeLogin": "ブラウザでログイン",
+    "kimiCodeLoggingIn": "ブラウザでの認証を待っています…",
+    "kimiCodeLoginOk": "Kimi Code ログイン成功",
+    "kimiCodeLoginFail": "Kimi Code ログイン失敗",
+    "kimiCodeLogout": "Kimiログアウト",
+    "kimiCodeLogoutOk": "ローカルのKimiトークンを削除しました",
+    "kimiCodeManualHint": "下にAPI Keyを入力することもできます（OAuthより優先されます）。",
+    "kimiCodeKeyPlaceholder": "任意：手動API Key…",
+    "kimiCodeKeyHint": "OAuthトークンと手動Keyは端末内のみに保存されます。手動KeyはOAuthより優先されます。"
   },
   "errors": {
     "noValidConfig": "有効なクラウドストレージ設定が見つかりません",

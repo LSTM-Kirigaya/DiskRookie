@@ -272,7 +272,20 @@
     "saveAsPresetHint": "将当前填写的 API 地址保存为一个选项，下次可直接从下拉列表中选择。建议先测试连接成功后再保存。",
     "presetNamePlaceholder": "输入预设名称，如：我的 DeepSeek",
     "saveAsPresetSuccess": "已保存为 API 地址选项",
-    "customApiPreset": "自定义服务"
+    "customApiPreset": "自定义服务",
+    "kimiCodeAuth": "Kimi Code 登录",
+    "kimiCodeOAuthHint": "使用 Kimi 账号在浏览器中完成设备授权（Device Code），无需手动填写 API Key。",
+    "kimiCodeLoggedIn": "已通过 Kimi 账号登录，令牌保存在本地。",
+    "kimiCodeUserCode": "若浏览器未自动打开，请手动访问验证页。用户码：{{code}}",
+    "kimiCodeLogin": "使用浏览器登录 Kimi",
+    "kimiCodeLoggingIn": "正在等待浏览器授权…",
+    "kimiCodeLoginOk": "Kimi Code 登录成功",
+    "kimiCodeLoginFail": "Kimi Code 登录失败",
+    "kimiCodeLogout": "退出 Kimi 登录",
+    "kimiCodeLogoutOk": "已清除本地 Kimi 令牌",
+    "kimiCodeManualHint": "也可在下方填写 API Key（将优先于 OAuth 使用）。",
+    "kimiCodeKeyPlaceholder": "可选：手动填写 API Key…",
+    "kimiCodeKeyHint": "OAuth 令牌与手动 Key 均仅保存在本机；手动 Key 会覆盖 OAuth。"
   },
   "errors": {
     "noValidConfig": "未找到有效的云存储配置",

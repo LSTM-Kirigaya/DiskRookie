@@ -1,7 +1,9 @@
 // AI 磁盘分析服务 - Function Calling 实现
 
 import { invoke } from '@tauri-apps/api/core'
-import { loadSettings, type ChatMessage, type FunctionTool, type ChatCompletionResponse } from './ai'
+import { loadSettings, resolveEffectiveApiKey, type ChatMessage, type FunctionTool, type ChatCompletionResponse } from './ai'
+import { applyKimiCodingAgentHeaders } from './kimi-oauth'
+import { httpFetch } from './http'
 import i18n from '../i18n'
 
 export interface CleanupSuggestion {
@@ -112,9 +114,9 @@ export async function analyzeWithAI(
   onProgress?: (msg: string) => void
 ): Promise<AnalysisResult> {
   const settings = await loadSettings()
-  
-  if (!settings.apiKey) {
-    throw new Error('请先在设置中配置 API Key')
+  const apiKey = await resolveEffectiveApiKey(settings)
+  if (!apiKey) {
+    throw new Error('请先在设置中配置 API Key，或完成 Kimi Code 登录')
   }
 
   const systemInfo = await getSystemInfo()
@@ -241,16 +243,18 @@ Please carefully analyze the data and provide reasonable, safe suggestions. All 
     
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
-      'Authorization': `Bearer ${settings.apiKey}`,
+      'Authorization': `Bearer ${apiKey}`,
     }
 
     if (settings.apiUrl.includes('anthropic')) {
-      headers['x-api-key'] = settings.apiKey
+      headers['x-api-key'] = apiKey
       headers['anthropic-version'] = '2023-06-01'
       delete headers['Authorization']
+    } else {
+      applyKimiCodingAgentHeaders(headers, settings.apiUrl)
     }
 
-    const response = await fetch(url, {
+    const response = await httpFetch(url, {
       method: 'POST',
       headers,
       body: JSON.stringify({

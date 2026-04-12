@@ -40,3 +40,4 @@ ai-disk-domain = { path = "../../../crates/domain-model" }
 ai-disk-scanner = { path = "../../../crates/disk-scanner" }
 ai-disk-engine = { path = "../../../crates/ai-engine" }
 ai-disk-executor = { path = "../../../crates/executor" }
+tauri-plugin-http = { version = "2", features = ["unsafe-headers"] }

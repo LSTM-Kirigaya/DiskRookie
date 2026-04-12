@@ -4,6 +4,13 @@
   "description": "Main window capabilities",
   "windows": ["*"],
   "permissions": [
+    {
+      "identifier": "http:default",
+      "allow": [
+        { "url": "https://**" },
+        { "url": "http://**" }
+      ]
+    },
     "core:default",
     "core:window:allow-close",
     "core:window:allow-minimize",

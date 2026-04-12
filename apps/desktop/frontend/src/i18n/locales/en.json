@@ -272,7 +272,20 @@
     "saveAsPresetHint": "Save the current API URL as a preset so you can select it from the dropdown next time. We recommend testing the connection first.",
     "presetNamePlaceholder": "Enter preset name, e.g. My DeepSeek",
     "saveAsPresetSuccess": "Saved as API URL preset",
-    "customApiPreset": "Custom service"
+    "customApiPreset": "Custom service",
+    "kimiCodeAuth": "Kimi Code sign-in",
+    "kimiCodeOAuthHint": "Sign in with your Kimi account in the browser (OAuth device code). No API key required.",
+    "kimiCodeLoggedIn": "Signed in with Kimi. Tokens are stored locally.",
+    "kimiCodeUserCode": "If the browser did not open, open the verification page manually. User code: {{code}}",
+    "kimiCodeLogin": "Sign in with browser",
+    "kimiCodeLoggingIn": "Waiting for browser authorization…",
+    "kimiCodeLoginOk": "Kimi Code sign-in successful",
+    "kimiCodeLoginFail": "Kimi Code sign-in failed",
+    "kimiCodeLogout": "Sign out Kimi",
+    "kimiCodeLogoutOk": "Local Kimi token cleared",
+    "kimiCodeManualHint": "You can also enter an API key below (it overrides OAuth).",
+    "kimiCodeKeyPlaceholder": "Optional: manual API key…",
+    "kimiCodeKeyHint": "OAuth tokens and manual keys are stored only on this device; a manual key overrides OAuth."
   },
   "errors": {
     "noValidConfig": "No valid cloud storage configuration found",

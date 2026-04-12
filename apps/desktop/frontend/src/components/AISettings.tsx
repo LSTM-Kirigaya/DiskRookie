@@ -41,10 +41,18 @@ import {
   getPresetId,
   fetchAvailableModels,
   testConnection,
+  resolveEffectiveApiKey,
   type AISettings as AISettingsType,
   type ModelInfo,
   type CustomApiPresetItem,
 } from '../services/ai'
+import {
+  KIMI_CODE_PRESET_ID,
+  KIMI_CODE_API_BASE,
+  loadKimiOAuthToken,
+  clearKimiOAuthToken,
+  runKimiDeviceLogin,
+} from '../services/kimi-oauth'
 import { loadAppSettings, saveAppSettings, type AppSettings } from '../services/settings'
 import { CloudStorageSettings } from './CloudStorageSettings'
 import { setLanguage, supportedLanguages } from '../i18n'
@@ -112,7 +120,11 @@ export function AISettings({ onClose, initialTab = 0, onSaved, themePreference: 
   const [savePresetName, setSavePresetName] = useState('')
   const [safeListPaths, setSafeListPaths] = useState<string[]>([])
   const [newSafeListPath, setNewSafeListPath] = useState('')
-  
+  const [kimiLogging, setKimiLogging] = useState(false)
+  const [kimiUserCode, setKimiUserCode] = useState('')
+  const [kimiHasOAuth, setKimiHasOAuth] = useState(false)
+  const [kimiAuthTick, setKimiAuthTick] = useState(0)
+
   // 主题和语言状态（如果外部传入则使用外部值，否则使用内部状态）
   const [internalThemePreference, setInternalThemePreference] = useState<'light' | 'dark' | 'system'>('system')
   const [internalLanguage, setInternalLanguage] = useState<string>(i18n.language)
@@ -167,31 +179,44 @@ export function AISettings({ onClose, initialTab = 0, onSaved, themePreference: 
     })
   }, [])
 
-  // 当当前厂商的 API Key 和 URL 都填写后，自动获取模型列表
-  // 注意：这里不应覆盖用户已保存的 model，兜底切换逻辑由下方 effect 处理
+  // Kimi OAuth 是否已有令牌（用于展示与拉模型列表）
   useEffect(() => {
-    const keyForUrl = (settings.providerApiKeys ?? {})[getPresetId(settings.apiUrl, customApiPresets)] ?? ''
+    const pid = getPresetId(settings.apiUrl, customApiPresets)
+    if (pid !== KIMI_CODE_PRESET_ID) {
+      setKimiHasOAuth(false)
+      return
+    }
+    void loadKimiOAuthToken().then(t => setKimiHasOAuth(!!t?.access_token))
+  }, [settings.apiUrl, customApiPresets, kimiAuthTick])
+
+  // 当当前厂商具备有效凭据后，自动获取模型列表
+  useEffect(() => {
+    let cancelled = false
     const loadModels = async () => {
-      if (keyForUrl && settings.apiUrl) {
+      const effective = await resolveEffectiveApiKey(settings)
+      if (cancelled) return
+      if (effective && settings.apiUrl) {
         setLoadingModels(true)
         try {
-          const models = await fetchAvailableModels(settings.apiUrl, keyForUrl)
-          setAvailableModels(models)
+          const models = await fetchAvailableModels(settings.apiUrl, effective)
+          if (!cancelled) setAvailableModels(models)
         } catch (error) {
           console.error('Failed to load models:', error)
-          setAvailableModels([])
+          if (!cancelled) setAvailableModels([])
         } finally {
-          setLoadingModels(false)
+          if (!cancelled) setLoadingModels(false)
         }
       } else {
         setAvailableModels([])
       }
     }
 
-    // 延迟加载，避免频繁请求
     const timer = setTimeout(loadModels, 500)
-    return () => clearTimeout(timer)
-  }, [settings.apiUrl, settings.providerApiKeys])
+    return () => {
+      cancelled = true
+      clearTimeout(timer)
+    }
+  }, [settings.apiUrl, settings.providerApiKeys, kimiAuthTick])
 
   // 当已有可用模型列表但当前选中不在列表中时，默认选第一个（避免 UI 显示空白）
   // 排除用户主动选「自定义」的情况：model 为 '' 或 'custom' 时不覆盖
@@ -229,7 +254,13 @@ export function AISettings({ onClose, initialTab = 0, onSaved, themePreference: 
     if (value === 'custom') {
       setSettings(s => ({ ...s, apiUrl: customUrl || '' }))
     } else {
-      setSettings(s => ({ ...s, apiUrl: value }))
+      setSettings(s => {
+        const next: AISettingsType = { ...s, apiUrl: value }
+        if (value === KIMI_CODE_API_BASE && (!s.model?.trim() || s.model === DEFAULT_SETTINGS.model)) {
+          next.model = 'kimi-for-coding'
+        }
+        return next
+      })
       setCustomUrl('')
     }
   }
@@ -252,7 +283,12 @@ export function AISettings({ onClose, initialTab = 0, onSaved, themePreference: 
       : !MODEL_PRESETS.some((p) => p.value === settings.model && p.value !== 'custom')
 
   // 当前选中的厂商对应的 API Key（独立存储，切换厂商显示各自的 key）
-  const currentApiKey = (settings.providerApiKeys ?? {})[getPresetId(settings.apiUrl, customApiPresets)] ?? ''
+  const currentPresetId = getPresetId(settings.apiUrl, customApiPresets)
+  const currentApiKey = (settings.providerApiKeys ?? {})[currentPresetId] ?? ''
+  const hasCredential =
+    currentPresetId === KIMI_CODE_PRESET_ID
+      ? currentApiKey.trim() !== '' || kimiHasOAuth
+      : currentApiKey.trim() !== ''
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center rounded-[12px] z-50">
@@ -385,43 +421,116 @@ export function AISettings({ onClose, initialTab = 0, onSaved, themePreference: 
                 )}
               </Box>
 
-              {/* API Key */}
+              {/* API Key / Kimi OAuth */}
               <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
                 <Typography variant="caption" sx={{ fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.1em', color: 'text.secondary' }}>
-                  {t('settings.apiKey')}
+                  {currentPresetId === KIMI_CODE_PRESET_ID ? t('settings.kimiCodeAuth') : t('settings.apiKey')}
                 </Typography>
-                <TextField
-                  fullWidth
-                  size="small"
-                  type={showApiKey ? 'text' : 'password'}
-                  value={currentApiKey}
-                  onChange={(e) => setSettings(s => ({
-                    ...s,
-                    providerApiKeys: { ...(s.providerApiKeys ?? {}), [getPresetId(s.apiUrl, customApiPresets)]: e.target.value },
-                  }))}
-                  placeholder={t('settings.inputApiKey')}
-                  InputProps={{
-                    endAdornment: (
-                      <InputAdornment position="end">
-                        <IconButton
-                          onClick={() => setShowApiKey(!showApiKey)}
-                          edge="end"
+
+                {currentPresetId === KIMI_CODE_PRESET_ID && (
+                  <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1, p: 1.5, borderRadius: 2, border: '1px solid', borderColor: 'divider', bgcolor: 'action.hover' }}>
+                    <Typography variant="body2" sx={{ fontSize: '12px', color: 'text.secondary' }}>
+                      {kimiHasOAuth ? t('settings.kimiCodeLoggedIn') : t('settings.kimiCodeOAuthHint')}
+                    </Typography>
+                    {kimiUserCode && (
+                      <Typography variant="caption" sx={{ fontFamily: 'monospace', wordBreak: 'break-all' }}>
+                        {t('settings.kimiCodeUserCode', { code: kimiUserCode })}
+                      </Typography>
+                    )}
+                    <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
+                      <Button
+                        variant="contained"
+                        size="small"
+                        disabled={kimiLogging}
+                        onClick={async () => {
+                          setKimiUserCode('')
+                          setKimiLogging(true)
+                          try {
+                            await runKimiDeviceLogin({
+                              openBrowser: true,
+                              onStatus: msg => {
+                                if (msg.startsWith('user_code:')) {
+                                  setKimiUserCode(msg.slice('user_code:'.length).trim())
+                                }
+                              },
+                            })
+                            setKimiAuthTick(x => x + 1)
+                            showNotification(t('settings.kimiCodeLoginOk'), '')
+                            onSaved?.()
+                          } catch (e) {
+                            const msg = e instanceof Error ? e.message : String(e)
+                            showNotification(t('settings.kimiCodeLoginFail'), msg)
+                          } finally {
+                            setKimiLogging(false)
+                            setKimiUserCode('')
+                          }
+                        }}
+                        sx={{ textTransform: 'none' }}
+                      >
+                        {kimiLogging ? t('settings.kimiCodeLoggingIn') : t('settings.kimiCodeLogin')}
+                      </Button>
+                      {kimiHasOAuth && (
+                        <Button
+                          variant="outlined"
                           size="small"
-                          sx={{ color: 'text.secondary' }}
+                          disabled={kimiLogging}
+                          onClick={async () => {
+                            await clearKimiOAuthToken()
+                            setKimiAuthTick(x => x + 1)
+                            showNotification(t('settings.kimiCodeLogoutOk'), '')
+                            onSaved?.()
+                          }}
+                          sx={{ textTransform: 'none' }}
                         >
-                          {showApiKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                        </IconButton>
-                      </InputAdornment>
-                    ),
-                  }}
-                  sx={{ fontSize: '14px' }}
-                />
-                <FormHelperText sx={{ fontSize: '10px', display: 'flex', alignItems: 'center', gap: 0.5, m: 0 }}>
-                  <AlertCircle className="w-3 h-3" />
-                  {t('settings.apiKeyHint')}
-                </FormHelperText>
+                          {t('settings.kimiCodeLogout')}
+                        </Button>
+                      )}
+                    </Box>
+                    {!kimiHasOAuth && (
+                      <Typography variant="caption" sx={{ color: 'text.secondary', fontSize: '11px' }}>
+                        {t('settings.kimiCodeManualHint')}
+                      </Typography>
+                    )}
+                  </Box>
+                )}
+
+                {/* Kimi 已通过 OAuth 登录时不显示手动 API Key，避免重复说明；未登录或非 Kimi 预设仍显示 */}
+                {(currentPresetId !== KIMI_CODE_PRESET_ID || !kimiHasOAuth) && (
+                  <>
+                    <TextField
+                      fullWidth
+                      size="small"
+                      type={showApiKey ? 'text' : 'password'}
+                      value={currentApiKey}
+                      onChange={(e) => setSettings(s => ({
+                        ...s,
+                        providerApiKeys: { ...(s.providerApiKeys ?? {}), [getPresetId(s.apiUrl, customApiPresets)]: e.target.value },
+                      }))}
+                      placeholder={currentPresetId === KIMI_CODE_PRESET_ID ? t('settings.kimiCodeKeyPlaceholder') : t('settings.inputApiKey')}
+                      InputProps={{
+                        endAdornment: (
+                          <InputAdornment position="end">
+                            <IconButton
+                              onClick={() => setShowApiKey(!showApiKey)}
+                              edge="end"
+                              size="small"
+                              sx={{ color: 'text.secondary' }}
+                            >
+                              {showApiKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                            </IconButton>
+                          </InputAdornment>
+                        ),
+                      }}
+                      sx={{ fontSize: '14px' }}
+                    />
+                    <FormHelperText sx={{ fontSize: '10px', display: 'flex', alignItems: 'center', gap: 0.5, m: 0 }}>
+                      <AlertCircle className="w-3 h-3" />
+                      {currentPresetId === KIMI_CODE_PRESET_ID ? t('settings.kimiCodeKeyHint') : t('settings.apiKeyHint')}
+                    </FormHelperText>
+                  </>
+                )}
                 {/* 测试连接 - 填写了 API Key、地址和模型后显示，响应信息显示在按钮右侧 */}
-                {currentApiKey && settings.apiUrl && settings.model && (
+                {hasCredential && settings.apiUrl && settings.model && (
                   <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1.5, mt: 0.5, flexWrap: 'wrap' }}>
                     <Button
                       variant="outlined"
@@ -431,7 +540,7 @@ export function AISettings({ onClose, initialTab = 0, onSaved, themePreference: 
                         setTestResult(null)
                         setTestingConnection(true)
                         try {
-                          const result = await testConnection({ ...settings, apiKey: currentApiKey })
+                          const result = await testConnection(settings)
                           setTestResult(result)
                           if (!result.ok) {
                             showNotification(t('settings.testConnectionFailed'), result.message)
@@ -463,8 +572,8 @@ export function AISettings({ onClose, initialTab = 0, onSaved, themePreference: 
                 )}
               </Box>
 
-              {/* 模型选择 - 只有填写了当前厂商的 API Key 才显示 */}
-              {currentApiKey && (
+              {/* 模型选择 - 具备凭据后显示 */}
+              {hasCredential && (
                 <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
                   <Typography variant="caption" sx={{ fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.1em', color: 'text.secondary' }}>
                     {t('settings.model')}

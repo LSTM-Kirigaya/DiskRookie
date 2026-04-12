@@ -4,6 +4,7 @@
   "version": "0.2.3",
   "type": "module",
   "scripts": {
+    "postinstall": "npm install --prefix frontend",
     "dev": "tauri dev",
     "build": "tauri build",
     "build:exe": "tauri build --target x86_64-pc-windows-msvc --no-bundle",

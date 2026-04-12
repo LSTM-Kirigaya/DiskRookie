@@ -9,7 +9,7 @@ import { Button, TextField, Typography, Fade, Tooltip, Dialog, DialogTitle, Dial
 import { PieChart, Pie, Cell, ResponsiveContainer } from 'recharts'
 import { Treemap, type TreemapNode } from './Treemap'
 import { formatBytes, formatDuration } from '../utils/format'
-import { loadSettings } from '../services/ai'
+import { loadSettings, resolveEffectiveApiKey } from '../services/ai'
 import { analyzeWithAI, deleteItem, type AnalysisResult } from '../services/ai-analysis'
 import { SuggestionCard } from './SuggestionCard'
 import { saveSnapshot, type Snapshot } from '../services/snapshot'
@@ -826,8 +826,9 @@ export function ExpertMode({ onOpenSettings, loadedSnapshot, onSnapshotLoaded, s
 
     useEffect(() => {
         if (isAdmin === false) {
-            loadSettings().then(settings => {
-                setStandardModeNoApi(!settings.apiKey?.trim())
+            loadSettings().then(async settings => {
+                const key = await resolveEffectiveApiKey(settings)
+                setStandardModeNoApi(!key?.trim())
             })
         }
     }, [isAdmin, settingsSavedTrigger])

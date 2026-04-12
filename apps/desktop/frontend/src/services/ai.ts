@@ -1,6 +1,13 @@
 // AI 服务层 - OpenAI 兼容协议
 
 import { readJSON, writeJSON, readStorageFile, writeStorageFile } from './storage'
+import { httpFetch } from './http'
+import {
+  KIMI_CODE_PRESET_ID,
+  KIMI_CODE_API_BASE,
+  loadKimiOAuthToken,
+  applyKimiCodingAgentHeaders,
+} from './kimi-oauth'
 
 export interface AISettings {
   apiUrl: string
@@ -79,6 +86,7 @@ export const MODEL_PRESETS = [
   { label: 'DeepSeek Coder', value: 'deepseek-coder', provider: 'DeepSeek' },
   { label: 'Qwen Turbo', value: 'qwen-turbo', provider: '阿里云' },
   { label: 'Qwen Plus', value: 'qwen-plus', provider: '阿里云' },
+  { label: 'Kimi Code', value: 'kimi-for-coding', provider: 'Kimi Code' },
   { label: '自定义', value: 'custom', provider: '' },
 ]
 
@@ -90,6 +98,11 @@ export const API_URL_PRESETS = [
   { id: 'aliyun', label: '阿里云 DashScope', value: 'https://dashscope.aliyuncs.com/compatible-mode/v1' },
   { id: 'azure', label: 'Azure OpenAI', value: 'https://YOUR_RESOURCE.openai.azure.com/openai/deployments/YOUR_DEPLOYMENT' },
   { id: 'ollama', label: '本地 Ollama', value: 'http://localhost:11434/v1' },
+  {
+    id: KIMI_CODE_PRESET_ID,
+    label: 'Kimi Code (OAuth)',
+    value: 'https://api.kimi.com/coding/v1',
+  },
   { id: 'custom', label: '自定义', value: 'custom' },
 ]
 
@@ -103,10 +116,16 @@ export interface CustomApiPresetItem {
 /** 根据 apiUrl 得到预设 id，用于读写 providerApiKeys；支持内置预设与用户自定义预设 */
 export function getPresetId(apiUrl: string, customPresets: CustomApiPresetItem[] = []): string {
   if (!apiUrl || apiUrl.trim() === '') return 'custom'
-  const trimmed = apiUrl.trim()
-  const custom = customPresets.find(p => p.value === trimmed)
+  const trimmed = apiUrl.trim().replace(/\/$/, '')
+  const kimiBase = KIMI_CODE_API_BASE.replace(/\/$/, '')
+  if (trimmed === kimiBase) {
+    return KIMI_CODE_PRESET_ID
+  }
+  const custom = customPresets.find(p => p.value.trim().replace(/\/$/, '') === trimmed)
   if (custom) return custom.id
-  const preset = API_URL_PRESETS.find(p => p.value !== 'custom' && p.value === trimmed)
+  const preset = API_URL_PRESETS.find(
+    p => p.value !== 'custom' && p.value.trim().replace(/\/$/, '') === trimmed
+  )
   return preset ? preset.id : 'custom'
 }
 
@@ -136,9 +155,26 @@ export async function loadSettings(): Promise<AISettings & { customApiPresets: C
   return {
     ...raw,
     providerApiKeys,
+    // apiKey 仅为当前厂商「手动填写」的 Key；Kimi Code 的 OAuth 令牌见 resolveEffectiveApiKey
     apiKey,
     customApiPresets,
   }
+}
+
+/** 解析实际用于请求的凭据：Kimi Code 优先手动 Key，否则使用 Device OAuth 存盘令牌 */
+export async function resolveEffectiveApiKey(settings: AISettings): Promise<string> {
+  const raw = await readJSON<StoredSettings>(SETTINGS_FILE, DEFAULT_SETTINGS as StoredSettings)
+  const customApiPresets = raw.customApiPresets ?? []
+  const presetId = getPresetId(settings.apiUrl, customApiPresets)
+  const keys = settings.providerApiKeys ?? raw.providerApiKeys ?? {}
+  const manual = keys[presetId] ?? ''
+
+  if (presetId === KIMI_CODE_PRESET_ID) {
+    if (manual.trim()) return manual.trim()
+    const oauth = await loadKimiOAuthToken()
+    return oauth?.access_token?.trim() ?? ''
+  }
+  return manual.trim()
 }
 
 // 保存设置（会保留文件中已有的 customApiPresets）
@@ -170,8 +206,9 @@ export async function sendChatRequest(
   settings: AISettings,
   onStream?: (chunk: string) => void
 ): Promise<string> {
-  if (!settings.apiKey) {
-    throw new Error('请先配置 API Key')
+  const apiKey = await resolveEffectiveApiKey(settings)
+  if (!apiKey) {
+    throw new Error('请先配置 API Key，或完成 Kimi Code 账号登录')
   }
 
   const url = `${settings.apiUrl.replace(/\/$/, '')}/chat/completions`
@@ -186,17 +223,19 @@ export async function sendChatRequest(
 
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
-    'Authorization': `Bearer ${settings.apiKey}`,
+    'Authorization': `Bearer ${apiKey}`,
   }
 
   // Anthropic 需要特殊的 header
   if (settings.apiUrl.includes('anthropic')) {
-    headers['x-api-key'] = settings.apiKey
+    headers['x-api-key'] = apiKey
     headers['anthropic-version'] = '2023-06-01'
     delete headers['Authorization']
+  } else {
+    applyKimiCodingAgentHeaders(headers, settings.apiUrl)
   }
 
-  const response = await fetch(url, {
+  const response = await httpFetch(url, {
     method: 'POST',
     headers,
     body: JSON.stringify(body),
@@ -269,13 +308,14 @@ export async function fetchAvailableModels(apiUrl: string, apiKey: string): Prom
     const headers: Record<string, string> = {
       'Authorization': `Bearer ${apiKey}`,
     }
+    applyKimiCodingAgentHeaders(headers, apiUrl)
 
     // Anthropic 不支持 models 端点，返回空数组
     if (apiUrl.includes('anthropic')) {
       return []
     }
 
-    const response = await fetch(url, {
+    const response = await httpFetch(url, {
       method: 'GET',
       headers,
     })
@@ -295,8 +335,9 @@ export async function fetchAvailableModels(apiUrl: string, apiKey: string): Prom
 
 /** 测试大模型连接：发送 Hello 并检查响应是否合理 */
 export async function testConnection(settings: AISettings): Promise<{ ok: boolean; message: string }> {
-  if (!settings.apiKey?.trim()) {
-    return { ok: false, message: '请先填写 API Key' }
+  const apiKey = await resolveEffectiveApiKey(settings)
+  if (!apiKey) {
+    return { ok: false, message: '请先填写 API Key，或完成 Kimi Code 登录' }
   }
   if (!settings.apiUrl?.trim()) {
     return { ok: false, message: '请先填写 API 地址' }

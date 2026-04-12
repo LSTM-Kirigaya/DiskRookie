@@ -16,6 +16,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_http::init())
         .manage(OAuthState::default())
         .invoke_handler(tauri::generate_handler![
             commands::scan::scan_path_command,
@@ -56,6 +57,8 @@ pub fn run() {
             // Cloud upload commands
             commands::cloud_upload::upload_to_cloud,
             commands::open_in_file_manager::open_in_file_manager,
+            commands::kimi_oauth::kimi_code_request_device,
+            commands::kimi_oauth::kimi_code_poll_token,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -3,6 +3,7 @@ import { Send, Loader2, Trash2, AlertCircle } from 'lucide-react'
 import { IconButton, TextField, Alert, Box } from '@mui/material'
 import {
   loadSettings,
+  resolveEffectiveApiKey,
   sendChatRequest,
   SYSTEM_PROMPT,
   type ChatMessage,
@@ -46,8 +47,9 @@ export function AIChat() {
     if (!input.trim() || isLoading) return
 
     const settings = await loadSettings()
-    if (!settings.apiKey) {
-      setError('请先在设置中配置 API Key')
+    const key = await resolveEffectiveApiKey(settings)
+    if (!key) {
+      setError('请先在设置中配置 API Key，或完成 Kimi Code 登录')
       return
     }
 
