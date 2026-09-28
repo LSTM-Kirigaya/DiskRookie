@@ -20,10 +20,7 @@ use std::time::Instant;
 
 use ai_disk_common::DiskAnalyzerError;
 use ai_disk_domain::{FileNode, ScanResult, TopFileEntry};
-use ntfs_reader::errors::NtfsReaderError;
-use ntfs_reader::file_info::{FileInfo, HashMapCache};
-use ntfs_reader::mft::Mft;
-use ntfs_reader::volume::Volume;
+use ntfs_reader::{DefaultPathCache, FileInfo, Mft, NtfsReaderError, Volume};
 use rayon::prelude::*;
 
 use crate::scanner::{normalize_path, ProgressCb, ProgressCbArc, SHALLOW_DIR_NAMES};
@@ -78,10 +75,10 @@ fn drive_letter_from_volume_root(volume_root: &Path) -> Option<String> {
 
 fn to_disk_analyzer_error(e: NtfsReaderError) -> DiskAnalyzerError {
     let msg = match &e {
-        NtfsReaderError::ElevationError => {
+        NtfsReaderError::AccessDenied => {
             "NTFS volume access requires elevated (admin) privileges".to_string()
         }
-        NtfsReaderError::IOError(io) => format!("MFT read I/O error: {}", io),
+        NtfsReaderError::Io(io) => format!("MFT read I/O error: {}", io),
         _ => format!("MFT error: {}", e),
     };
     DiskAnalyzerError::Io(std::io::Error::new(std::io::ErrorKind::Other, msg))
@@ -216,18 +213,22 @@ pub fn scan_volume_mft_top_files(
     let vol_trim_for_filter = format!("{}:", drive);
     let cap = n.saturating_add(1).min(1_000_000);
     let mut heap: BinaryHeap<Reverse<(u64, String, Option<u64>)>> = BinaryHeap::with_capacity(cap);
-    let mut cache = HashMapCache::default();
+    let mut cache = DefaultPathCache::default();
     let counter = AtomicU64::new(0);
 
-    mft.iterate_files(|file| {
-        let info = FileInfo::with_cache(&mft, file, &mut cache);
+    for file in mft.files() {
+        let info = FileInfo::with_cache(&file, &mut cache);
         if info.is_directory {
-            return;
+            continue;
         }
-        let path_str = info.path.to_string_lossy();
+        let path_str = info
+            .path
+            .as_deref()
+            .map(|p| p.to_string_lossy())
+            .unwrap_or_default();
         let full_path = normalize_ntfs_path(&path_str, &drive);
         if !path_under_volume_ascii(&full_path, &vol_trim_for_filter) {
-            return;
+            continue;
         }
         let modified = info.modified.and_then(|t| {
             let s = t.unix_timestamp();
@@ -248,7 +249,7 @@ pub fn scan_volume_mft_top_files(
         while heap.len() > n {
             heap.pop();
         }
-    });
+    }
 
     if let Some(ref cb) = progress {
         cb(counter.load(Ordering::Relaxed), path);
@@ -370,32 +371,36 @@ pub fn scan_volume_mft(
     let volume_path = format!(r"\\.\{}:", drive);
     let volume_root_trim = format!("{}:", drive);
     let volume_root_key = format!(r"{}:\", drive);
-    // 使用上游 ntfs-reader API：Mft::new 一次性加载 $MFT，再 iterate_files 枚举。
+    // 使用上游 ntfs-reader API：Mft::new 一次性加载 $MFT，再 files() 枚举。
     let volume = Volume::new(volume_path.as_str()).map_err(to_disk_analyzer_error)?;
-    stderr_ln!("[scan:mft] volume opened: {} bytes", volume.volume_size);
+    stderr_ln!("[scan:mft] volume opened: {} bytes", volume.volume_size());
     let mft = Mft::new(volume).map_err(to_disk_analyzer_error)?;
     stderr_ln!(
         "[scan:mft] MFT loaded into memory, max_records={}",
-        mft.max_record
+        mft.record_count()
     );
     let vol_trim_for_filter = format!("{}:", drive);
     let mut records: Vec<MftRecord> = Vec::with_capacity(2_000_000);
     let mut child_index: HashMap<String, Vec<usize>> = HashMap::new();
     let mut direct_sizes: HashMap<String, u64> = HashMap::new();
-    let mut cache = HashMapCache::default();
+    let mut cache = DefaultPathCache::default();
     let counter = AtomicU64::new(0);
     let filtered_count = AtomicU64::new(0);
     let filtered_file_size = AtomicU64::new(0); // 仅非目录，用于 total_size
-    mft.iterate_files(|file| {
-        let info = FileInfo::with_cache(&mft, file, &mut cache);
-        let path_str = info.path.to_string_lossy();
+    for file in mft.files() {
+        let info = FileInfo::with_cache(&file, &mut cache);
+        let path_str = info
+            .path
+            .as_deref()
+            .map(|p| p.to_string_lossy())
+            .unwrap_or_default();
         let full_path = normalize_ntfs_path(&path_str, &drive);
         if !path_under_volume_ascii(&full_path, &vol_trim_for_filter) {
             filtered_count.fetch_add(1, Ordering::Relaxed);
             if !info.is_directory {
                 filtered_file_size.fetch_add(info.size, Ordering::Relaxed);
             }
-            return;
+            continue;
         }
         let modified = info.modified.and_then(|t| {
             let s = t.unix_timestamp();
@@ -430,7 +435,7 @@ pub fn scan_volume_mft(
             .entry(path_trim.to_string())
             .and_modify(|v| *v = v.saturating_add(s))
             .or_insert(s);
-    });
+    }
     let n_records = counter.load(Ordering::Relaxed);
     let n_filtered = filtered_count.load(Ordering::Relaxed);
     let size_filtered = filtered_file_size.load(Ordering::Relaxed);
@@ -443,7 +448,7 @@ pub fn scan_volume_mft(
     if let Some(ref cb) = progress {
         cb(n_records, &volume_root_str);
     }
-    let _volume = mft.volume.clone();
+    let _volume = mft.volume().clone();
     let recursive_sizes = compute_recursive_sizes(
         &records,
         &child_index,
@@ -502,7 +507,7 @@ pub fn scan_volume_mft(
             100.0 * get_mft_ms as f64 / total_ms as f64
         );
         stderr_ln!(
-            "[MFT_TIMING] 2. iterate_files + collect records:    {:>8} ms  ({:>5.1}%)",
+            "[MFT_TIMING] 2. files() + collect records:          {:>8} ms  ({:>5.1}%)",
             iterate_ms,
             100.0 * iterate_ms as f64 / total_ms as f64
         );

@@ -15,8 +15,7 @@
 
 #![cfg(windows)]
 
-use ntfs_reader::mft::Mft;
-use ntfs_reader::volume::Volume;
+use ntfs_reader::{Mft, Volume};
 
 fn volume_path() -> (String, String) {
     let drive = std::env::var("NTFS_VOLUME")
@@ -44,15 +43,15 @@ fn ntfs_reader_c_drive_basic_info() {
     };
 
     eprintln!("[ntfs_reader] ---------- {} 卷信息 ----------", label);
-    eprintln!("  卷路径: {:?}", volume.path);
+    eprintln!("  卷路径: {:?}", volume.path());
     eprintln!(
         "  卷大小: {} 字节 ({:.2} GiB)",
-        volume.volume_size,
-        volume.volume_size as f64 / (1024f64.powi(3))
+        volume.volume_size(),
+        volume.volume_size() as f64 / (1024f64.powi(3))
     );
-    eprintln!("  簇大小: {} 字节", volume.cluster_size);
-    eprintln!("  文件记录大小: {} 字节", volume.file_record_size);
-    eprintln!("  MFT 位置: {} 字节", volume.mft_position);
+    eprintln!("  簇大小: {} 字节", volume.cluster_size());
+    eprintln!("  文件记录大小: {} 字节", volume.file_record_size());
+    eprintln!("  MFT 位置: {} 字节", volume.mft_position());
 
     let only_volume_info = std::env::var("NTFS_VOLUME_INFO_ONLY")
         .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
@@ -72,8 +71,7 @@ fn ntfs_reader_c_drive_basic_info() {
     };
 
     eprintln!("[ntfs_reader] ---------- MFT 信息 ----------");
-    eprintln!("  MFT 最大记录数: {}", mft.max_record);
-    eprintln!("  MFT 数据长度: {} 字节", mft.data.len());
-    eprintln!("  位图长度: {} 字节", mft.bitmap.len());
+    eprintln!("  MFT 记录槽位数: {}", mft.record_count());
+    eprintln!("  MFT 内存占用: {} 字节", mft.size_in_memory());
     eprintln!("[ntfs_reader] ---------- 完成 ----------");
 }
